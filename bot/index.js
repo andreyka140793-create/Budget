@@ -4,11 +4,10 @@ import db, { getOrCreateUser } from '../server/db.js';
 import { getUsersForReminder, getUserDaySummary } from '../server/routes.js';
 import { parseBankSms } from '../server/smsParse.js';
 import { suggestCategory } from '../server/categorize.js';
+import { isGrokEnabled, parseTransactionWithGrok, askBudgetGrok } from '../server/grok.js';
 
 const token = process.env.BOT_TOKEN;
 const webappUrl = process.env.WEBAPP_URL || 'https://example.com';
-
-// Временные черновики SMS: key = `${tgId}:${msgId}` 
 const pending = new Map();
 
 function fmt(n) {
@@ -23,6 +22,86 @@ function getDefaultAccount(userId) {
   return db.prepare('SELECT * FROM accounts WHERE user_id=? ORDER BY id LIMIT 1').get(userId);
 }
 
+function monthSummary(userId) {
+  const now = new Date();
+  const from = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+  const to = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-31`;
+  const income = db.prepare(
+    `SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE user_id=? AND type='income' AND date>=? AND date<=?`
+  ).get(userId, from, to).t;
+  const expense = db.prepare(
+    `SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE user_id=? AND type='expense' AND date>=? AND date<=?`
+  ).get(userId, from, to).t;
+  const byCat = db.prepare(
+    `SELECT c.name, SUM(t.amount) as total FROM transactions t
+     LEFT JOIN categories c ON c.id=t.category_id
+     WHERE t.user_id=? AND t.type='expense' AND t.date>=? AND t.date<=?
+     GROUP BY t.category_id ORDER BY total DESC LIMIT 8`
+  ).all(userId, from, to);
+  const accounts = db.prepare('SELECT name, balance FROM accounts WHERE user_id=?').all(userId);
+  return { from, to, income, expense, balance: income - expense, byCategory: byCat, accounts };
+}
+
+async function buildDraftFromText(user, text) {
+  // 1) быстрый парсер SMS
+  const sms = parseBankSms(text);
+  if (sms) {
+    const cats = getCategories(user.id);
+    const sug = suggestCategory(`${sms.merchant} ${sms.raw}`, sms.type, cats);
+    return {
+      amount: sms.amount,
+      type: sms.type,
+      category_id: sug.category_id,
+      category_name: sug.category_name,
+      note: sms.merchant || sms.raw.slice(0, 80),
+      source: 'sms',
+    };
+  }
+
+  // 2) правила + простая эвристика суммы в тексте
+  const amountMatch = text.match(/(\d+[\s.,]?\d*)\s*(?:₽|р|руб|rub)?/i);
+  if (amountMatch && !isGrokEnabled()) {
+    const amount = parseFloat(amountMatch[1].replace(/\s/g, '').replace(',', '.'));
+    if (amount > 0) {
+      const type = /зарплат|получил|зачисл|доход|аванс/i.test(text) ? 'income' : 'expense';
+      const cats = getCategories(user.id);
+      const sug = suggestCategory(text, type, cats);
+      return {
+        amount,
+        type,
+        category_id: sug.category_id,
+        category_name: sug.category_name,
+        note: text.slice(0, 80),
+        source: 'rules',
+      };
+    }
+  }
+
+  // 3) Grok
+  if (isGrokEnabled()) {
+    const cats = getCategories(user.id);
+    const names = cats.map((c) => c.name);
+    const g = await parseTransactionWithGrok(text, names);
+    if (g) {
+      const found = cats.find(
+        (c) => c.type === g.type && c.name.toLowerCase() === g.category_name.toLowerCase()
+      ) || cats.find((c) => c.type === g.type && c.name === 'Прочее')
+        || cats.find((c) => c.type === g.type);
+
+      return {
+        amount: g.amount,
+        type: g.type,
+        category_id: found?.id ?? null,
+        category_name: found?.name || g.category_name,
+        note: g.note || text.slice(0, 80),
+        source: 'grok',
+      };
+    }
+  }
+
+  return null;
+}
+
 export function startBot() {
   if (!token) {
     console.error('Укажи BOT_TOKEN в .env');
@@ -30,6 +109,8 @@ export function startBot() {
   }
 
   const bot = new Bot(token);
+  const grokOn = isGrokEnabled();
+  console.log('Grok:', grokOn ? 'включён' : 'выкл (нет XAI_API_KEY)');
 
   bot.command('start', async (ctx) => {
     const name = ctx.from?.first_name || 'друг';
@@ -37,13 +118,11 @@ export function startBot() {
     const kb = new InlineKeyboard().webApp('💰 Открыть бюджет', webappUrl);
     await ctx.reply(
       `Привет, ${name}!\n\n` +
-        `*Дзен-бюджет*\n\n` +
-        `📱 *SMS банка* — перешлите сюда смс о покупке/зачислении, бот предложит записать операцию.\n` +
-        `📂 Категории подставятся автоматически.\n\n` +
-        `Команды:\n` +
-        `/app — приложение\n` +
-        `/today — сегодня\n` +
-        `/remind on|off|21 — напоминания`,
+        `*Мой бюджет*\n\n` +
+        `📱 Перешлите *SMS банка*\n` +
+        `✍️ Или напишите: «кофе 350» / «зарплата 80000»\n` +
+        (grokOn ? `🤖 Grok поможет разобрать текст\n` : '') +
+        `\n/app — приложение\n/today — сегодня\n/ask … — вопрос про бюджет\n/remind on|off|21`,
       { parse_mode: 'Markdown', reply_markup: kb }
     );
   });
@@ -60,6 +139,24 @@ export function startBot() {
     await ctx.reply(
       `📅 Сегодня (${s.date})\nОпераций: ${s.count}\nДоходы: +${fmt(s.income)}\nРасходы: −${fmt(s.expense)}\nИтого: ${fmt(s.income - s.expense)}`
     );
+  });
+
+  bot.command('ask', async (ctx) => {
+    if (!ctx.from?.id) return;
+    if (!isGrokEnabled()) {
+      await ctx.reply('Grok не подключён. Добавьте XAI_API_KEY на сервере.');
+      return;
+    }
+    const q = (ctx.match || '').toString().trim() || 'Кратко оцени мой бюджет за этот месяц';
+    const user = getOrCreateUser(ctx.from.id, ctx.from.first_name || '');
+    await ctx.replyWithChatAction('typing');
+    try {
+      const summary = monthSummary(user.id);
+      const answer = await askBudgetGrok(q, summary);
+      await ctx.reply(answer.slice(0, 3500));
+    } catch (e) {
+      await ctx.reply('Не удалось спросить Grok: ' + e.message);
+    }
   });
 
   bot.command('remind', async (ctx) => {
@@ -82,10 +179,9 @@ export function startBot() {
       await ctx.reply(`Напоминание каждый день в ${h}:00.`);
       return;
     }
-    await ctx.reply(`Сейчас: ${user.remind_enabled ? 'вкл' : 'выкл'}, час ${user.remind_hour ?? 21}\n/remind on|off|21`);
+    await ctx.reply(`Сейчас: ${user.remind_enabled ? 'вкл' : 'выкл'}, час ${user.remind_hour ?? 21}`);
   });
 
-  // Подтверждение SMS
   bot.callbackQuery(/^sms:(ok|no):(.+)$/, async (ctx) => {
     const action = ctx.match[1];
     const key = ctx.match[2];
@@ -93,10 +189,9 @@ export function startBot() {
     await ctx.answerCallbackQuery();
 
     if (!draft || String(draft.tgId) !== String(ctx.from.id)) {
-      await ctx.editMessageText('Черновик устарел. Перешлите SMS ещё раз.');
+      await ctx.editMessageText('Черновик устарел. Напишите ещё раз.');
       return;
     }
-
     if (action === 'no') {
       pending.delete(key);
       await ctx.editMessageText('Отменено.');
@@ -112,15 +207,7 @@ export function startBot() {
       db.prepare(
         `INSERT INTO transactions (user_id, category_id, account_id, amount, type, note, date)
          VALUES (?,?,?,?,?,?,?)`
-      ).run(
-        user.id,
-        draft.category_id,
-        acc?.id ?? null,
-        draft.amount,
-        draft.type,
-        draft.note || '',
-        today
-      );
+      ).run(user.id, draft.category_id, acc?.id ?? null, draft.amount, draft.type, draft.note || '', today);
       if (acc) {
         db.prepare('UPDATE accounts SET balance = balance + ? WHERE id=?').run(delta, acc.id);
       }
@@ -133,55 +220,45 @@ export function startBot() {
     );
   });
 
-  // Любой текст / пересланное SMS
   bot.on('message:text', async (ctx) => {
     const text = ctx.message.text || '';
-    // команды уже обработаны
     if (text.startsWith('/')) return;
 
     const user = getOrCreateUser(ctx.from.id, ctx.from.first_name || '');
-    const parsed = parseBankSms(text);
+    await ctx.replyWithChatAction('typing');
 
-    if (!parsed) {
+    let draft;
+    try {
+      draft = await buildDraftFromText(user, text);
+    } catch (e) {
+      await ctx.reply('Ошибка разбора: ' + e.message);
+      return;
+    }
+
+    if (!draft) {
       const kb = new InlineKeyboard().webApp('💰 Открыть бюджет', webappUrl);
       await ctx.reply(
-        'Не похоже на SMS банка.\n\nПерешлите SMS о покупке/зачислении целиком, или откройте приложение.',
+        'Не распознал операцию.\n\nПримеры:\n• кофе 350\n• зарплата 80000\n• перешлите SMS банка\n\nИли /ask как дела с бюджетом?',
         { reply_markup: kb }
       );
       return;
     }
 
-    const cats = getCategories(user.id);
-    const sug = suggestCategory(
-      `${parsed.merchant} ${parsed.raw}`,
-      parsed.type,
-      cats
-    );
-
     const key = `${ctx.from.id}:${ctx.message.message_id}`;
-    pending.set(key, {
-      tgId: ctx.from.id,
-      amount: parsed.amount,
-      type: parsed.type,
-      category_id: sug.category_id,
-      category_name: sug.category_name,
-      note: parsed.merchant || parsed.raw.slice(0, 80),
-    });
-    // TTL 30 мин
+    pending.set(key, { ...draft, tgId: ctx.from.id });
     setTimeout(() => pending.delete(key), 30 * 60 * 1000);
 
-    const sign = parsed.type === 'income' ? '+' : '−';
-    const conf = sug.confidence === 'high' ? '🎯' : '❓';
+    const sign = draft.type === 'income' ? '+' : '−';
+    const src = draft.source === 'grok' ? '🤖 Grok' : draft.source === 'sms' ? '📱 SMS' : '⚡';
     const kb = new InlineKeyboard()
       .text('✅ Записать', `sms:ok:${key}`)
       .text('❌ Отмена', `sms:no:${key}`);
 
     await ctx.reply(
-      `Распознано из SMS:\n\n` +
-        `${sign}*${fmt(parsed.amount)}* · ${parsed.type === 'income' ? 'доход' : 'расход'}\n` +
-        `${conf} Категория: *${sug.category_name || '—'}*\n` +
-        (parsed.merchant ? `📌 ${parsed.merchant}\n` : '') +
-        (parsed.balance != null ? `Баланс в SMS: ${fmt(parsed.balance)}\n` : '') +
+      `${src} распознал:\n\n` +
+        `${sign}*${fmt(draft.amount)}* · ${draft.type === 'income' ? 'доход' : 'расход'}\n` +
+        `📂 ${draft.category_name || '—'}\n` +
+        (draft.note ? `📝 ${draft.note}\n` : '') +
         `\nЗаписать?`,
       { parse_mode: 'Markdown', reply_markup: kb }
     );
@@ -190,32 +267,29 @@ export function startBot() {
   bot.on('message', async (ctx) => {
     if (ctx.message.text) return;
     const kb = new InlineKeyboard().webApp('💰 Открыть бюджет', webappUrl);
-    await ctx.reply('Перешлите текстовое SMS банка или /app', { reply_markup: kb });
+    await ctx.reply('Текст, SMS или /app', { reply_markup: kb });
   });
 
   bot.catch((err) => console.error('Bot error:', err));
   bot.start();
-  console.log('Бот запущен (SMS + напоминания)');
+  console.log('Бот запущен');
 
   let lastHourSent = -1;
   setInterval(async () => {
     const now = new Date();
-    const hour = now.getHours();
-    const minute = now.getMinutes();
-    if (minute !== 0 || hour === lastHourSent) return;
-    lastHourSent = hour;
-    const users = getUsersForReminder(hour);
-    for (const u of users) {
+    if (now.getMinutes() !== 0 || now.getHours() === lastHourSent) return;
+    lastHourSent = now.getHours();
+    for (const u of getUsersForReminder(now.getHours())) {
       try {
         const s = getUserDaySummary(u.id);
         const kb = new InlineKeyboard().webApp('💰 Открыть бюджет', webappUrl);
         await bot.api.sendMessage(
           u.telegram_id,
-          `🔔 Напоминание\nСегодня: ${s.count} оп.\nРасходы: −${fmt(s.expense)}\nДоходы: +${fmt(s.income)}`,
+          `🔔 Сегодня: ${s.count} оп.\n−${fmt(s.expense)} / +${fmt(s.income)}`,
           { reply_markup: kb }
         );
       } catch (e) {
-        console.warn('Remind fail', u.telegram_id, e.message);
+        console.warn('Remind fail', e.message);
       }
     }
   }, 30_000);
