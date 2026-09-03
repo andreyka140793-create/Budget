@@ -4,6 +4,7 @@ import { validateInitData, devUser } from './auth.js';
 import { createBackup, listBackups } from './backup.js';
 import { suggestCategory } from './categorize.js';
 import { parseBankSms } from './smsParse.js';
+import { isGrokEnabled, parseReceiptImage, parseReceiptText, parseTransactionWithGrok } from './grok.js';
 
 const router = Router();
 
@@ -313,165 +314,92 @@ router.delete('/transactions/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// ===== CSV export =====
-
-// ===== Backup =====
-router.post('/backup', (req, res) => {
-  // Клиент может запросить создание снимка; сервер копирует файл БД
-  const result = createBackup();
-  if (!result.ok) return res.status(500).json({ error: result.error });
-  res.json(result);
-});
-
-router.get('/backup/list', (req, res) => {
-  res.json(listBackups());
-});
-
-router.get('/export/csv', (req, res) => {
-  const rows = db.prepare(
-    `SELECT t.date, t.type, t.amount, t.note,
-            c.name as category, a.name as account
-     FROM transactions t
-     LEFT JOIN categories c ON c.id = t.category_id
-     LEFT JOIN accounts a ON a.id = t.account_id
-     WHERE t.user_id=?
-     ORDER BY t.date ASC, t.id ASC`
-  ).all(req.user.id);
-
-  const escape = (v) => {
-    const s = String(v ?? '');
-    if (/[",\n;]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-    return s;
-  };
-
-  const header = 'date;type;amount;category;account;note';
-  const lines = rows.map((r) =>
-    [r.date, r.type, r.amount, r.category || '', r.account || '', r.note || '']
-      .map(escape).join(';')
-  );
-  const bom = '\uFEFF';
-  const csv = bom + header + '\n' + lines.join('\n');
-
-  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', 'attachment; filename="dzen-budget.csv"');
-  res.send(csv);
-});
 
 // ===== Settings / reminders =====
 
-// Импорт CSV (date;type;amount;category;account;note  или проще amount,type,note,date)
-router.post('/import/csv', (req, res) => {
-  const text = req.body?.csv || req.body?.text || '';
-  if (!text || typeof text !== 'string') {
-    return res.status(400).json({ error: 'Передайте csv в теле { "csv": "..." }' });
-  }
 
+// Разбор текста SMS из Mini App
+router.post('/parse-sms', async (req, res) => {
+  const text = req.body?.text || '';
   const categories = db.prepare('SELECT * FROM categories WHERE user_id=?').all(req.user.id);
-  const accounts = db.prepare('SELECT * FROM accounts WHERE user_id=? ORDER BY id').all(req.user.id);
-  const defaultAcc = accounts[0]?.id ?? null;
 
-  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  let start = 0;
-  if (lines[0] && /date|тип|type|amount|сумма/i.test(lines[0])) start = 1;
-
-  const sep = lines[0]?.includes(';') ? ';' : ',';
-  let imported = 0;
-  const errors = [];
-
-  const insertTx = db.prepare(
-    `INSERT INTO transactions (user_id, category_id, account_id, amount, type, note, date)
-     VALUES (?,?,?,?,?,?,?)`
-  );
-  const updAcc = db.prepare('UPDATE accounts SET balance = balance + ? WHERE id=? AND user_id=?');
-
-  const run = db.transaction(() => {
-    for (let i = start; i < lines.length; i++) {
-      const cols = lines[i].split(sep).map((c) => c.replace(/^"|"$/g, '').trim());
-      // Форматы:
-      // date;type;amount;category;account;note
-      // amount;type;note;date
-      let date, type, amount, catName, note;
-      if (cols.length >= 6) {
-        [date, type, amount, catName, , note] = cols;
-      } else if (cols.length >= 4) {
-        // amount;type;note;date OR date;type;amount;note
-        if (/^\d{4}-\d{2}-\d{2}/.test(cols[0])) {
-          date = cols[0];
-          type = cols[1];
-          amount = cols[2];
-          note = cols[3];
-        } else {
-          amount = cols[0];
-          type = cols[1];
-          note = cols[2];
-          date = cols[3];
-        }
-      } else if (cols.length >= 2) {
-        amount = cols[0];
-        type = cols[1];
-        note = cols[2] || '';
-        date = cols[3] || new Date().toISOString().slice(0, 10);
-      } else {
-        errors.push({ line: i + 1, error: 'мало колонок' });
-        continue;
-      }
-
-      type = String(type || '').toLowerCase();
-      if (type === 'расход' || type === 'expense' || type === 'out') type = 'expense';
-      else if (type === 'доход' || type === 'income' || type === 'in') type = 'income';
-      else {
-        errors.push({ line: i + 1, error: 'тип' });
-        continue;
-      }
-
-      const sum = parseFloat(String(amount).replace(/\s/g, '').replace(',', '.'));
-      if (!sum || sum <= 0) {
-        errors.push({ line: i + 1, error: 'сумма' });
-        continue;
-      }
-
-      if (!/^\d{4}-\d{2}-\d{2}/.test(date || '')) {
-        date = new Date().toISOString().slice(0, 10);
-      } else {
-        date = date.slice(0, 10);
-      }
-
-      let category_id = null;
-      if (catName) {
-        const found = categories.find((c) => c.type === type && c.name.toLowerCase() === catName.toLowerCase());
-        category_id = found?.id ?? null;
-      }
-      if (!category_id) {
-        const sug = suggestCategory(note || catName || '', type, categories);
-        category_id = sug.category_id;
-      }
-
-      insertTx.run(req.user.id, category_id, defaultAcc, sum, type, note || '', date);
-      if (defaultAcc) {
-        const delta = type === 'income' ? sum : -sum;
-        updAcc.run(delta, defaultAcc, req.user.id);
-      }
-      imported++;
-    }
-  });
-
-  try {
-    run();
-  } catch (e) {
-    return res.status(500).json({ error: e.message });
+  let parsed = parseBankSms(text);
+  if (parsed) {
+    const sug = suggestCategory(`${parsed.merchant} ${parsed.raw}`, parsed.type, categories);
+    return res.json({ ...parsed, ...sug, source: 'sms' });
   }
 
-  res.json({ imported, errors: errors.slice(0, 20), errorCount: errors.length });
+  if (isGrokEnabled()) {
+    try {
+      const g = await parseTransactionWithGrok(text, categories.map((c) => c.name));
+      if (g) {
+        const found = categories.find((c) => c.type === g.type && c.name.toLowerCase() === g.category_name.toLowerCase())
+          || categories.find((c) => c.type === g.type && c.name === 'Прочее')
+          || categories.find((c) => c.type === g.type);
+        return res.json({
+          amount: g.amount,
+          type: g.type,
+          merchant: g.note,
+          category_id: found?.id ?? null,
+          category_name: found?.name || g.category_name,
+          source: 'grok',
+        });
+      }
+    } catch (e) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
+
+  return res.status(400).json({ error: 'Не удалось распознать SMS' });
 });
 
-// Разбор текста SMS из Mini App (без бота)
-router.post('/parse-sms', (req, res) => {
-  const text = req.body?.text || '';
-  const parsed = parseBankSms(text);
-  if (!parsed) return res.status(400).json({ error: 'Не удалось распознать SMS' });
+// Чек: фото (base64 data URL) или текст/PDF
+router.post('/parse-receipt', async (req, res) => {
+  if (!isGrokEnabled()) {
+    return res.status(400).json({ error: 'Нужен XAI_API_KEY на сервере' });
+  }
   const categories = db.prepare('SELECT * FROM categories WHERE user_id=?').all(req.user.id);
-  const sug = suggestCategory(`${parsed.merchant} ${parsed.raw}`, parsed.type, categories);
-  res.json({ ...parsed, ...sug });
+  const names = categories.map((c) => c.name);
+  const { image, text, pdfBase64 } = req.body || {};
+
+  try {
+    let g = null;
+    if (image && typeof image === 'string' && image.startsWith('data:image')) {
+      g = await parseReceiptImage(image, names);
+    } else if (text && String(text).trim().length > 10) {
+      g = await parseReceiptText(String(text), names);
+    } else if (pdfBase64) {
+      const buf = Buffer.from(String(pdfBase64).replace(/^data:application\/pdf;base64,/, ''), 'base64');
+      const asLatin = buf.toString('latin1');
+      const texts = [];
+      const re = /\(([^)]{2,80})\)\s*Tj/g;
+      let m;
+      while ((m = re.exec(asLatin)) && texts.length < 100) texts.push(m[1]);
+      const extracted = texts.join(' ').replace(/\s+/g, ' ').trim();
+      if (extracted.length > 15) g = await parseReceiptText(extracted, names);
+      if (!g) return res.status(400).json({ error: 'PDF не прочитан. Сделайте фото чека.' });
+    } else {
+      return res.status(400).json({ error: 'Нужны image (data URL), text или pdfBase64' });
+    }
+
+    if (!g) return res.status(400).json({ error: 'Не удалось распознать чек' });
+
+    const found = categories.find((c) => c.type === g.type && c.name.toLowerCase() === g.category_name.toLowerCase())
+      || categories.find((c) => c.type === g.type && c.name === 'Прочее')
+      || categories.find((c) => c.type === g.type);
+
+    res.json({
+      amount: g.amount,
+      type: g.type,
+      note: g.note,
+      date: g.date || null,
+      category_id: found?.id ?? null,
+      category_name: found?.name || g.category_name,
+      source: 'receipt',
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 router.get('/settings', (req, res) => {
