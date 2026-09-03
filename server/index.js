@@ -35,7 +35,20 @@ app.post('/telegram-webhook',(req,res,next)=>{
 });
 
 const staticRoot=fs.existsSync(webRoot)?webRoot:fallbackRoot;
-app.use(express.static(staticRoot,{index:'index.html',etag:true,maxAge:config.nodeEnv==='production'?'1h':0}));
+// The app is served as source when a prebuilt dist is not present. In that mode
+// Telegram WebView caching can otherwise keep an old main.js for a long time.
+app.use(express.static(staticRoot,{
+  index:'index.html',
+  etag:true,
+  maxAge:0,
+  setHeaders:(res,filePath)=>{
+    if (filePath.endsWith('index.html') || /\.(js|css|html)$/.test(filePath)) {
+      res.setHeader('Cache-Control','no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma','no-cache');
+      res.setHeader('Expires','0');
+    }
+  }
+}));
 app.get('*',(req,res,next)=>{if(req.path.startsWith('/api')||req.path==='/telegram-webhook')return next();res.sendFile(path.join(staticRoot,'index.html'));});
 
 app.use((err,req,res,next)=>{console.error('HTTP error',err);if(res.headersSent)return next(err);res.status(500).json({error:'Внутренняя ошибка сервера'});});
