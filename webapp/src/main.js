@@ -384,75 +384,86 @@ document.getElementById('account-form').addEventListener('submit', async (e) => 
   loadDashboard();
 });
 
-// CSV + Backup
-document.getElementById('btn-export').addEventListener('click', async () => {
-  try {
-    const res = await fetch(API + '/export/csv', {
-      headers: { 'X-Telegram-Init-Data': initData },
-    });
-    if (!res.ok) throw new Error('Ошибка экспорта');
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'dzen-budget.csv';
-    a.click();
-    URL.revokeObjectURL(url);
-  } catch (e) {
-    alert(e.message);
-  }
-});
+// Backup
 
 
-// CSV import
-document.getElementById('btn-import').addEventListener('click', async () => {
-  const csv = document.getElementById('import-csv').value.trim();
-  if (!csv) return alert('Вставьте CSV');
-  try {
-    const r = await api('/import/csv', { method: 'POST', body: JSON.stringify({ csv }) });
-    document.getElementById('import-status').textContent =
-      `Импортировано: ${r.imported}` + (r.errorCount ? `, ошибок: ${r.errorCount}` : '');
-    document.getElementById('import-csv').value = '';
-    await loadDashboard();
-    if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
-  } catch (e) {
-    alert(e.message);
-  }
-});
 
-// Parse SMS in Mini App
+
+async function confirmAndSaveParsed(r, fallbackNote) {
+  const sign = r.type === 'income' ? '+' : '−';
+  const ok = confirm(
+    `Распознано: ${sign}${fmt(r.amount)} (${r.type === 'income' ? 'доход' : 'расход'})\n` +
+      `Категория: ${r.category_name || '—'}\n` +
+      `${r.note || r.merchant || ''}\n\nЗаписать?`
+  );
+  if (!ok) return;
+  const acc = state.accounts[0];
+  await api('/transactions', {
+    method: 'POST',
+    body: JSON.stringify({
+      amount: r.amount,
+      type: r.type,
+      category_id: r.category_id,
+      account_id: acc?.id,
+      note: r.note || r.merchant || fallbackNote || '',
+      date: r.date || new Date().toISOString().slice(0, 10),
+    }),
+  });
+  document.getElementById('sms-status').textContent = 'Записано ✓';
+  if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+  await loadDashboard();
+}
+
 document.getElementById('btn-parse-sms').addEventListener('click', async () => {
   const text = document.getElementById('sms-text').value.trim();
   if (!text) return;
+  document.getElementById('sms-status').textContent = 'Распознаю…';
   try {
     const r = await api('/parse-sms', { method: 'POST', body: JSON.stringify({ text }) });
-    const sign = r.type === 'income' ? '+' : '−';
-    const ok = confirm(
-      `Распознано: ${sign}${fmt(r.amount)} (${r.type})\n` +
-      `Категория: ${r.category_name || '—'}\n` +
-      `${r.merchant || ''}\n\nЗаписать?`
-    );
-    if (!ok) return;
-    const acc = state.accounts[0];
-    await api('/transactions', {
-      method: 'POST',
-      body: JSON.stringify({
-        amount: r.amount,
-        type: r.type,
-        category_id: r.category_id,
-        account_id: acc?.id,
-        note: r.merchant || text.slice(0, 80),
-        date: new Date().toISOString().slice(0, 10),
-      }),
-    });
+    await confirmAndSaveParsed(r, text.slice(0, 80));
     document.getElementById('sms-text').value = '';
-    document.getElementById('sms-status').textContent = 'Записано';
-    await loadDashboard();
   } catch (e) {
     document.getElementById('sms-status').textContent = e.message;
     alert(e.message);
   }
 });
+
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+document.getElementById('btn-pick-receipt').addEventListener('click', () => {
+  document.getElementById('receipt-file').click();
+});
+
+document.getElementById('receipt-file').addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  document.getElementById('sms-status').textContent = 'Распознаю чек…';
+  try {
+    const dataUrl = await readFileAsDataURL(file);
+    let body;
+    if (file.type.startsWith('image/')) {
+      body = { image: dataUrl };
+    } else if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+      body = { pdfBase64: dataUrl };
+    } else {
+      throw new Error('Нужны фото или PDF');
+    }
+    const r = await api('/parse-receipt', { method: 'POST', body: JSON.stringify(body) });
+    await confirmAndSaveParsed(r, file.name);
+  } catch (err) {
+    document.getElementById('sms-status').textContent = err.message;
+    alert(err.message);
+  }
+  e.target.value = '';
+});
+
 
 document.getElementById('btn-backup').addEventListener('click', async () => {
   try {
