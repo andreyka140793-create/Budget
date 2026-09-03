@@ -1,11 +1,51 @@
-const tg = window.Telegram?.WebApp;
-if (tg) {
-  tg.ready(); tg.expand();
-  try { tg.disableVerticalSwipes?.(); tg.requestFullscreen?.(); } catch {}
+const tg = window.Telegram?.WebApp || null;
+
+// Telegram clients differ in which Mini App APIs they support.
+// Never let an optional Telegram API failure prevent the rest of the UI from booting.
+function initTelegram() {
+  if (!tg) return;
+  try { tg.ready?.(); } catch (e) { console.warn('Telegram ready failed', e); }
+  try { tg.expand?.(); } catch (e) { console.warn('Telegram expand failed', e); }
+  try { tg.disableVerticalSwipes?.(); } catch (e) { console.warn('disableVerticalSwipes failed', e); }
+
+  const requestFs = () => {
+    try { tg.expand?.(); } catch {}
+    try {
+      if (typeof tg.requestFullscreen === 'function' &&
+          (!tg.isVersionAtLeast || tg.isVersionAtLeast('8.0'))) {
+        tg.requestFullscreen();
+      }
+    } catch (e) {
+      console.warn('Telegram fullscreen request failed', e);
+    }
+  };
+
+  try { tg.onEvent?.('fullscreen_failed', e => {
+    console.warn('Telegram fullscreen failed', e);
+    try { tg.expand?.(); } catch {}
+  }); } catch {}
+
+  // Try after initialization, after activation/viewport changes, and on the
+  // first real tap. This covers Telegram clients that reject an early request.
+  setTimeout(requestFs, 250);
+  setTimeout(requestFs, 1200);
+  try { tg.onEvent?.('activated', requestFs); } catch {}
+  try { tg.onEvent?.('viewportChanged', requestFs); } catch {}
+
+  document.addEventListener('pointerdown', () => requestFs(), {once:true, passive:true});
+
+  const fsButton = document.getElementById('btn-fullscreen');
+  fsButton?.addEventListener('click', () => {
+    requestFs();
+    haptic('success');
+  });
 }
 
+initTelegram();
+
 const API='/api';
-const initData=tg?.initData||'dev';
+const initData=tg?.initData || '';
+
 const state={type:'expense',categories:[],accounts:[],modal:null,busy:new Set()};
 
 function escapeHtml(value){return String(value??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
@@ -17,11 +57,23 @@ function haptic(kind='success'){try{tg?.HapticFeedback?.notificationOccurred(kin
 function applyTheme(){const tp=tg?.themeParams||{},r=document.documentElement;const values={bg:tp.bg_color||'#0f1419',text:tp.text_color||'#e8eef7',hint:tp.hint_color||'#8b9bb4',button:tp.button_color||'#5b8def',card:tp.secondary_bg_color||'#1a2332'};for(const[k,v]of Object.entries(values))r.style.setProperty(`--tg-${k}`,v);document.body.style.background=values.bg;document.body.style.color=values.text;}
 applyTheme();tg?.onEvent?.('themeChanged',applyTheme);
 
-async function api(path,options={}){
-  const headers={'X-Telegram-Init-Data':initData,...(options.body?{'Content-Type':'application/json'}:{}),...(options.headers||{})};
-  const res=await fetch(API+path,{...options,headers});
-  const data=await res.json().catch(()=>({}));
-  if(!res.ok)throw new Error(data.error||`Ошибка ${res.status}`);
+async function api(path, options = {}) {
+  const headers = {
+    ...(options.body ? {'Content-Type': 'application/json'} : {}),
+    ...(initData ? {'X-Telegram-Init-Data': initData} : {}),
+    ...(options.headers || {})
+  };
+  let res;
+  try {
+    res = await fetch(API + path, { ...options, headers, credentials: 'same-origin' });
+  } catch {
+    throw new Error('Нет соединения с сервером');
+  }
+  const contentType = res.headers.get('content-type') || '';
+  const data = contentType.includes('application/json')
+    ? await res.json().catch(() => ({}))
+    : { error: await res.text().catch(() => '') };
+  if (!res.ok) throw new Error(data.error || `Ошибка ${res.status}`);
   return data;
 }
 async function withBusy(key,fn){if(state.busy.has(key))return;state.busy.add(key);try{return await fn();}finally{state.busy.delete(key);}}
@@ -77,6 +129,32 @@ function openModal(act,id){state.modal={act,id};document.getElementById('modal-t
 document.getElementById('modal-cancel').addEventListener('click',()=>{state.modal=null;document.getElementById('modal').classList.add('hidden');});
 document.getElementById('modal-ok').addEventListener('click',async()=>{if(!state.modal)return;const amount=Number(document.getElementById('modal-amount').value);if(!Number.isFinite(amount)||amount<=0)return;try{await api(`/piggies/${state.modal.id}/${state.modal.act}`,{method:'POST',body:JSON.stringify({amount})});document.getElementById('modal').classList.add('hidden');state.modal=null;haptic();await loadPiggies();}catch(e){alert(e.message);}});
 
-(async()=>{try{await loadCategories();await loadDashboard();}catch(e){console.error(e);document.getElementById('balance').textContent='Ошибка';document.getElementById('recent-list').textContent=e.message;}})();
+async function boot() {
+  try {
+    await loadCategories();
+    await loadDashboard();
+  } catch (e) {
+    console.error('Mini App boot error:', e);
+    const balance = document.getElementById('balance');
+    const recent = document.getElementById('recent-list');
+    if (balance) balance.textContent = 'Ошибка подключения';
+    if (recent) recent.textContent = e?.message || 'Не удалось загрузить данные';
+  }
+}
 
-document.getElementById('remind-timezone').addEventListener('change',async e=>{try{await api('/settings',{method:'POST',body:JSON.stringify({timezone:e.target.value})});}catch(err){alert(err.message);await loadSettings();}});
+const timezoneSelect = document.getElementById('remind-timezone');
+if (timezoneSelect) {
+  timezoneSelect.addEventListener('change', async e => {
+    try {
+      await api('/settings', {method:'POST', body:JSON.stringify({timezone:e.target.value})});
+    } catch (err) {
+      alert(err.message);
+      await loadSettings().catch(() => {});
+    }
+  });
+}
+
+window.addEventListener('error', e => console.error('Mini App error:', e.error || e.message));
+window.addEventListener('unhandledrejection', e => console.error('Mini App rejection:', e.reason));
+
+boot();

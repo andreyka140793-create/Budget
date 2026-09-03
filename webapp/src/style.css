@@ -39,7 +39,10 @@ body {
 .file-btn { width: 100%; }
 
 
-.top { padding: 16px 16px 8px; }
+.top { padding: calc(12px + env(safe-area-inset-top, 0px)) 16px 8px; }
+.top-line { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.fullscreen-btn { flex:0 0 auto; width:40px; height:40px; border:0; border-radius:12px; background:var(--card); color:var(--text); font-size:22px; cursor:pointer; touch-action:manipulation; }
+.fullscreen-btn:active { opacity:.75; transform:scale(.97); }
 .greet { font-size: 15px; color: var(--muted); margin-bottom: 10px; }
 
 .balance-card {
@@ -73,6 +76,8 @@ body {
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
+  touch-action: manipulation;
+  -webkit-user-select: none;
 }
 .tab.active { background: var(--accent); color: #fff; }
 
@@ -330,3 +335,7 @@ textarea {
   resize: vertical;
 }
 .tx-delete{margin:4px 0 8px auto;display:block;border:0;border-radius:10px;padding:7px 12px;background:#c62828;color:#fff;font-weight:600;cursor:pointer}
+
+button, input, select, textarea { touch-action: manipulation; }
+html { overscroll-behavior: none; }
+body { overscroll-behavior-y: none; }
