@@ -1,15 +1,14 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  base: './',
+  server: {
+    host: '0.0.0.0',
+    port: 3000,
+    allowedHosts: true // Позволяет открывать Mini App через сторонние домены и туннели
+  },
   build: {
     outDir: 'dist',
-    emptyOutDir: true,
-  },
-  server: {
-    port: 5173,
-    proxy: {
-      '/api': 'http://localhost:3000',
-    },
-  },
+    assetsDir: 'assets',
+    sourcemap: false
+  }
 });
