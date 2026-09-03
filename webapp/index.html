@@ -139,10 +139,6 @@
         <p class="hint" id="sms-status"></p>
         <div id="receipt-preview" class="hint" style="display:none;margin-top:6px"></div>
 
-        <h2 class="section-title">Бэкап</h2>
-        <button class="btn secondary" id="btn-backup">💾 Бэкап базы сейчас</button>
-        <p class="hint" id="backup-status">Автобэкап каждый день в 03:00. До 14 копий.</p>
-
         <h2 class="section-title">Напоминания в Telegram</h2>
         <div class="settings-row">
           <label class="switch-label">
@@ -151,6 +147,11 @@
           </label>
           <label>Час
             <select id="remind-hour"></select>
+          </label>
+          <label>Часовой пояс
+            <select id="remind-timezone">
+              <option>Europe/Warsaw</option><option>Europe/Moscow</option><option>Europe/Kyiv</option><option>Europe/Berlin</option><option>Europe/London</option><option>Europe/Paris</option><option>Europe/Rome</option><option>Europe/Madrid</option><option>Europe/Istanbul</option><option>Asia/Dubai</option><option>Asia/Tbilisi</option><option>Asia/Almaty</option><option>Asia/Tashkent</option><option>Asia/Bangkok</option><option>Asia/Singapore</option><option>Asia/Tokyo</option><option>Australia/Sydney</option><option>America/New_York</option><option>America/Chicago</option><option>America/Denver</option><option>America/Los_Angeles</option><option>UTC</option>
+            </select>
           </label>
         </div>
         <p class="hint">Бот пришлёт сводку за день. Также: /remind on в чате с ботом.</p>
