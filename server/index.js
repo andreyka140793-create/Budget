@@ -1,72 +1,52 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import path from 'path';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
-import routes from './routes.js';
+import path from 'node:path';
+import fs from 'node:fs';
+import { config } from './config.js';
+import router from './routes.js';
 import { startDailyBackupScheduler } from './backup.js';
+import { startBot, getWebhookMiddleware, startReminderScheduler } from '../bot/index.js';
+import db from './db.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const app = express();
-const PORT = process.env.PORT || 3000;
+const app=express();
+app.disable('x-powered-by');
+app.set('trust proxy', process.env.TRUST_PROXY==='1' ? 1 : false);
 
-app.use(cors());
-app.use(express.json({ limit: '12mb' }));
+const allowedOrigin=config.allowedOrigin;
+app.use(cors({origin:(origin,cb)=>{if(!origin)return cb(null,true);if(allowedOrigin&&origin===allowedOrigin)return cb(null,true);if(config.nodeEnv!=='production'&&!allowedOrigin)return cb(null,true);return cb(new Error('CORS origin denied'));},methods:['GET','POST','DELETE','OPTIONS'],allowedHeaders:['Content-Type','X-Telegram-Init-Data','Idempotency-Key']}));
+app.use((req,res,next)=>{res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('Permissions-Policy','camera=(),microphone=(),geolocation=()');next();});
+app.use(express.json({limit:`${config.maxBodyMb}mb`,strict:true}));
 
-// Telegram webhook (до JSON-парсера для raw? grammY express ok with json)
-// Подключим после старта бота
+const webRoot=path.join(process.cwd(),'webapp','dist');
+const fallbackRoot=path.join(process.cwd(),'webapp');
+app.use('/api',router);
 
-// API
-app.use('/api', routes);
+app.get('/health',(req,res)=>res.json({ok:true,db:db.open?'up':'unknown',time:new Date().toISOString()}));
+app.get('/readiness',(req,res)=>res.json({ready:true}));
 
-// Health
-app.get('/health', (_, res) =>
-  res.json({
-    ok: true,
-    time: new Date().toISOString(),
-    bot: Boolean(process.env.BOT_TOKEN),
-    webapp: process.env.WEBAPP_URL || null,
-  })
-);
+// Telegram webhook: Telegram itself sends the update. Require the secret token header.
+app.post('/telegram-webhook',(req,res,next)=>{
+  if(!config.webhookSecret)return res.status(503).json({error:'Webhook secret is not configured'});
+  if(req.get('X-Telegram-Bot-Api-Secret-Token')!==config.webhookSecret)return res.status(401).json({error:'Unauthorized'});
+  const middleware=getWebhookMiddleware();
+  if(!middleware)return res.status(503).json({error:'Bot is not initialized'});
+  return middleware(req,res,next);
+});
 
-// Mini App static
-const webDist = path.join(__dirname, '..', 'webapp', 'dist');
-const webSrc = path.join(__dirname, '..', 'webapp');
-const useDist = fs.existsSync(path.join(webDist, 'index.html'));
-const webRoot = useDist ? webDist : webSrc;
-console.log(`Static Mini App from: ${webRoot} (${useDist ? 'dist' : 'source'})`);
+const staticRoot=fs.existsSync(webRoot)?webRoot:fallbackRoot;
+app.use(express.static(staticRoot,{index:'index.html',etag:true,maxAge:config.nodeEnv==='production'?'1h':0}));
+app.get('*',(req,res,next)=>{if(req.path.startsWith('/api')||req.path==='/telegram-webhook')return next();res.sendFile(path.join(staticRoot,'index.html'));});
 
-app.use(express.static(webRoot));
-if (!useDist) {
-  app.use('/src', express.static(path.join(webSrc, 'src')));
+app.use((err,req,res,next)=>{console.error('HTTP error',err);if(res.headersSent)return next(err);res.status(500).json({error:'Внутренняя ошибка сервера'});});
+
+const server=app.listen(config.port,()=>console.log(`Budget server listening on :${config.port}`));
+startDailyBackupScheduler();
+
+if(process.env.RUN_BOT!=='0'){
+  startBot(config.botMode).then(()=>startReminderScheduler()).catch(e=>console.error('Bot startup failed',e));
 }
 
-app.get('*', (req, res, next) => {
-  if (req.path.startsWith('/api') || req.path.startsWith('/telegram-webhook')) return next();
-  const indexPath = path.join(webRoot, 'index.html');
-  if (fs.existsSync(indexPath)) res.sendFile(indexPath);
-  else res.status(404).send('Mini App files missing');
-});
-
-app.listen(PORT, '0.0.0.0', async () => {
-  console.log(`API http://0.0.0.0:${PORT}`);
-  startDailyBackupScheduler();
-
-  if (process.env.BOT_TOKEN && process.env.RUN_BOT !== '0') {
-    try {
-      const botMod = await import('../bot/index.js');
-      const mode = process.env.BOT_MODE || 'webhook';
-      await botMod.startBot(mode);
-      const wh = botMod.getWebhookMiddleware();
-      if (wh) {
-        app.post('/telegram-webhook', wh);
-        console.log('Webhook route /telegram-webhook ready');
-      }
-    } catch (e) {
-      console.error('Bot failed:', e);
-    }
-  } else {
-    console.warn('Bot skipped (BOT_TOKEN / RUN_BOT)');
-  }
-});
+process.once('SIGINT',()=>server.close(()=>process.exit(0)));
+process.once('SIGTERM',()=>server.close(()=>process.exit(0)));
+export default app;

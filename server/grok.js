@@ -1,9 +1,2 @@
-/** @deprecated use gemini.js — реэкспорт для совместимости */
-export {
-  isGrokEnabled,
-  isGeminiEnabled,
-  parseTransactionWithGrok,
-  parseReceiptImage,
-  parseReceiptText,
-  askBudgetGrok,
-} from './gemini.js';
+// Backward-compatible exports. The provider is Gemini.
+export * from './gemini.js';
