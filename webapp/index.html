@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Дзен-бюджет</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <link rel="stylesheet" href="./src/style.css" />
@@ -49,15 +49,9 @@
           <label>Сумма
             <input type="number" id="tx-amount" inputmode="decimal" step="0.01" min="0.01" placeholder="0" required />
           </label>
-          <label>Категория
-            <select id="tx-category" required></select>
-          </label>
-          <label>Счёт
-            <select id="tx-account" required></select>
-          </label>
-          <label>Дата
-            <input type="date" id="tx-date" required />
-          </label>
+          <label>Категория <select id="tx-category" required></select></label>
+          <label>Счёт <select id="tx-account" required></select></label>
+          <label>Дата <input type="date" id="tx-date" required /></label>
           <label>Комментарий
             <input type="text" id="tx-note" placeholder="Необязательно" maxlength="120" />
           </label>
@@ -71,11 +65,9 @@
         <h2 class="section-title">Лимиты на месяц</h2>
         <div id="budget-list" class="cat-list"></div>
         <form id="budget-form" class="form">
-          <label>Категория расхода
-            <select id="budget-category"></select>
-          </label>
+          <label>Категория расхода <select id="budget-category"></select></label>
           <label>Лимит (₽)
-            <input type="number" id="budget-amount" inputmode="decimal" min="0" step="100" placeholder="10000" required />
+            <input type="number" id="budget-amount" inputmode="decimal" min="1" step="100" placeholder="10000" required />
           </label>
           <button type="submit" class="btn primary">Сохранить лимит</button>
         </form>
@@ -85,12 +77,8 @@
         <div id="piggy-list" class="piggy-list"></div>
         <button class="btn secondary" id="btn-new-piggy">+ Новая копилка</button>
         <form id="piggy-form" class="form hidden">
-          <label>Название
-            <input type="text" id="piggy-name" placeholder="Отпуск" required maxlength="40" />
-          </label>
-          <label>Цель (₽)
-            <input type="number" id="piggy-goal" inputmode="decimal" min="0" step="1" placeholder="50000" />
-          </label>
+          <label>Название <input type="text" id="piggy-name" placeholder="Отпуск" required maxlength="40" /></label>
+          <label>Цель (₽) <input type="number" id="piggy-goal" inputmode="decimal" min="0" step="1" placeholder="50000" /></label>
           <button type="submit" class="btn primary">Создать</button>
         </form>
       </section>
@@ -101,12 +89,8 @@
 
         <h2 class="section-title">Перевод между счетами</h2>
         <form id="transfer-form" class="transfer-form">
-          <label>Откуда
-            <select id="tr-from"></select>
-          </label>
-          <label>Куда
-            <select id="tr-to"></select>
-          </label>
+          <label>Откуда <select id="tr-from"></select></label>
+          <label>Куда <select id="tr-to"></select></label>
           <label>Сумма
             <input type="number" id="tr-amount" inputmode="decimal" step="0.01" min="0.01" placeholder="0" required />
           </label>
@@ -114,9 +98,7 @@
         </form>
 
         <form id="account-form" class="form">
-          <label>Название счёта
-            <input type="text" id="acc-name" placeholder="Накопительный" required maxlength="40" />
-          </label>
+          <label>Название счёта <input type="text" id="acc-name" placeholder="Накопительный" required maxlength="40" /></label>
           <label>Тип
             <select id="acc-type">
               <option value="card">Карта</option>
@@ -130,18 +112,11 @@
         <h2 class="section-title">Распознать SMS / чек</h2>
         <p class="hint">Вставьте текст SMS банка или загрузите фото/PDF чека</p>
         <textarea id="sms-text" rows="3" placeholder="Текст SMS банка..."></textarea>
-        <button class="btn secondary" id="btn-parse-sms" style="margin-top:8px">📱 Распознать SMS</button>
+        <button class="btn secondary" id="btn-parse-sms">📱 Распознать SMS</button>
 
-        <label for="receipt-file" class="btn secondary file-btn" style="margin-top:12px;display:block;text-align:center;cursor:pointer">
-          🧾 Фото или PDF чека
-        </label>
-        <input type="file" id="receipt-file" accept="image/*,application/pdf,.pdf" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden" />
+        <label for="receipt-file" class="btn secondary file-btn">🧾 Фото или PDF чека</label>
+        <input type="file" id="receipt-file" accept="image/*,application/pdf,.pdf" class="visually-hidden" />
         <p class="hint" id="sms-status"></p>
-        <div id="receipt-preview" class="hint" style="display:none;margin-top:6px"></div>
-
-        <h2 class="section-title">Бэкап</h2>
-        <button class="btn secondary" id="btn-backup">💾 Бэкап базы сейчас</button>
-        <p class="hint" id="backup-status">Автобэкап каждый день в 03:00. До 14 копий.</p>
 
         <h2 class="section-title">Напоминания в Telegram</h2>
         <div class="settings-row">
@@ -149,11 +124,15 @@
             <input type="checkbox" id="remind-enabled" />
             Ежедневное напоминание
           </label>
-          <label>Час
-            <select id="remind-hour"></select>
-          </label>
+          <label>Час <select id="remind-hour"></select></label>
         </div>
-        <p class="hint">Бот пришлёт сводку за день. Также: /remind on в чате с ботом.</p>
+        <p class="hint" id="tz-hint"></p>
+
+        <div id="admin-block" class="hidden">
+          <h2 class="section-title">Бэкап (админ)</h2>
+          <button class="btn secondary" id="btn-backup">💾 Сделать бэкап</button>
+          <p class="hint" id="backup-status">Автобэкап каждый день в 03:00.</p>
+        </div>
       </section>
     </main>
 
