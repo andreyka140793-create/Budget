@@ -157,6 +157,7 @@ export function startBot() {
   console.log('Grok:', grokOn ? 'включён' : 'выкл');
 
   bot.command('start', async (ctx) => {
+    try {
     const name = ctx.from?.first_name || 'друг';
     if (ctx.from?.id) getOrCreateUser(ctx.from.id, name);
     const kb = new InlineKeyboard().webApp('💰 Открыть бюджет', webappUrl);
@@ -170,6 +171,10 @@ export function startBot() {
         `\n/app /today /ask /remind`,
       { parse_mode: 'Markdown', reply_markup: kb }
     );
+    } catch (e) {
+      console.error('/start error', e);
+      try { await ctx.reply('Бот запущен, но ошибка: ' + e.message); } catch {}
+    }
   });
 
   bot.command('app', async (ctx) => {
