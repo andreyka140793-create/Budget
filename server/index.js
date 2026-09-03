@@ -1,72 +1,137 @@
 import 'dotenv/config';
+import http from 'node:http';
+import path from 'node:path';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
 import cors from 'cors';
-import path from 'path';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
+import helmet from 'helmet';
+
+import { config, assertConfig } from './config.js';
+import { closeDb } from './db.js';
 import routes from './routes.js';
 import { startDailyBackupScheduler } from './backup.js';
+import { startReminderScheduler } from './reminders.js';
+
+assertConfig();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-const PORT = process.env.PORT || 3000;
+app.set('trust proxy', 1);
+app.disable('x-powered-by');
 
-app.use(cors());
-app.use(express.json({ limit: '12mb' }));
-
-// Telegram webhook (до JSON-парсера для raw? grammY express ok with json)
-// Подключим после старта бота
-
-// API
-app.use('/api', routes);
-
-// Health
-app.get('/health', (_, res) =>
-  res.json({
-    ok: true,
-    time: new Date().toISOString(),
-    bot: Boolean(process.env.BOT_TOKEN),
-    webapp: process.env.WEBAPP_URL || null,
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        'default-src': ["'self'"],
+        'script-src': ["'self'", 'https://telegram.org'],
+        'style-src': ["'self'", "'unsafe-inline'"],
+        'img-src': ["'self'", 'data:'],
+        'connect-src': ["'self'"],
+        'frame-ancestors': ['https://web.telegram.org', 'https://telegram.org'],
+        'object-src': ["'none'"],
+      },
+    },
+    crossOriginEmbedderPolicy: false,
   })
 );
 
-// Mini App static
-const webDist = path.join(__dirname, '..', 'webapp', 'dist');
-const webSrc = path.join(__dirname, '..', 'webapp');
-const useDist = fs.existsSync(path.join(webDist, 'index.html'));
-const webRoot = useDist ? webDist : webSrc;
-console.log(`Static Mini App from: ${webRoot} (${useDist ? 'dist' : 'source'})`);
+if (config.allowedOrigin) {
+  app.use(cors({ origin: config.allowedOrigin, methods: ['GET', 'POST', 'DELETE'], maxAge: 600 }));
+} else if (!config.isProd) {
+  app.use(cors());
+}
 
-app.use(express.static(webRoot));
-if (!useDist) {
-  app.use('/src', express.static(path.join(webSrc, 'src')));
+app.use(express.json({ limit: `${config.maxBodyMb}mb` }));
+
+app.get('/health', (_req, res) =>
+  res.json({ ok: true, time: new Date().toISOString(), env: config.nodeEnv, bot: Boolean(config.botToken) })
+);
+
+app.use('/api', routes);
+
+/* ---------- статика Mini App ---------- */
+const webDist = path.join(__dirname, '..', 'webapp', 'dist');
+const distReady = fs.existsSync(path.join(webDist, 'index.html'));
+
+if (distReady) {
+  app.use(
+    express.static(webDist, {
+      index: false,
+      setHeaders(res, filePath) {
+        res.setHeader('Cache-Control', /\.(js|css|woff2?|png|jpe?g|svg)$/.test(filePath)
+          ? 'public, max-age=31536000, immutable'
+          : 'no-cache');
+      },
+    })
+  );
+} else if (config.isProd) {
+  console.error('webapp/dist не собран. Запустите: npm run build:web');
+} else {
+  const webSrc = path.join(__dirname, '..', 'webapp');
+  console.warn('dist не найден — раздаю исходники (только для разработки)');
+  app.use(express.static(webSrc, { index: false }));
 }
 
 app.get('*', (req, res, next) => {
-  if (req.path.startsWith('/api') || req.path.startsWith('/telegram-webhook')) return next();
-  const indexPath = path.join(webRoot, 'index.html');
-  if (fs.existsSync(indexPath)) res.sendFile(indexPath);
-  else res.status(404).send('Mini App files missing');
+  if (req.path.startsWith('/api') || req.path === config.webhookPath) return next();
+  const indexPath = distReady
+    ? path.join(webDist, 'index.html')
+    : path.join(__dirname, '..', 'webapp', 'index.html');
+  if (fs.existsSync(indexPath)) {
+    res.setHeader('Cache-Control', 'no-cache');
+    return res.sendFile(indexPath);
+  }
+  res.status(503).send('Mini App не собран');
 });
 
-app.listen(PORT, '0.0.0.0', async () => {
-  console.log(`API http://0.0.0.0:${PORT}`);
+app.use((err, _req, res, _next) => {
+  if (err?.type === 'entity.too.large') return res.status(413).json({ error: 'Файл слишком большой' });
+  console.error('Server error', err);
+  res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+});
+
+/* ---------- запуск ---------- */
+const server = http.createServer(app);
+let botModule = null;
+
+server.listen(config.port, '0.0.0.0', async () => {
+  console.log(`API на порту ${config.port} (${config.nodeEnv})`);
   startDailyBackupScheduler();
 
-  if (process.env.BOT_TOKEN && process.env.RUN_BOT !== '0') {
+  if (config.botToken && config.runBot) {
     try {
-      const botMod = await import('../bot/index.js');
-      const mode = process.env.BOT_MODE || 'webhook';
-      await botMod.startBot(mode);
-      const wh = botMod.getWebhookMiddleware();
-      if (wh) {
-        app.post('/telegram-webhook', wh);
-        console.log('Webhook route /telegram-webhook ready');
+      botModule = await import('../bot/index.js');
+      const middleware = await botModule.startBot(config.botMode);
+      if (middleware) {
+        app.post(config.webhookPath, middleware);
+        console.log('Webhook-маршрут готов:', config.webhookPath);
       }
+      startReminderScheduler(() => botModule?.getBot() ?? null);
+      console.log('Планировщик напоминаний запущен');
     } catch (e) {
-      console.error('Bot failed:', e);
+      console.error('Не удалось запустить бота:', e);
     }
   } else {
-    console.warn('Bot skipped (BOT_TOKEN / RUN_BOT)');
+    console.warn('Бот не запущен (нет BOT_TOKEN или RUN_BOT=0)');
   }
 });
+
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`${signal}: останавливаюсь…`);
+  const force = setTimeout(() => process.exit(1), 10_000);
+  force.unref();
+  try { await botModule?.stopBot?.(); } catch {}
+  server.close(() => {
+    closeDb();
+    process.exit(0);
+  });
+}
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('unhandledRejection', (r) => console.error('unhandledRejection', r));
