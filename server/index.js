@@ -52,5 +52,12 @@ app.listen(PORT, '0.0.0.0', () => {
 
 // Бот в том же процессе
 if (process.env.BOT_TOKEN && process.env.RUN_BOT !== '0') {
-  import('../bot/index.js').then((m) => m.startBot()).catch((e) => console.warn('Bot not started:', e.message));
+  import('../bot/index.js')
+    .then((m) => {
+      console.log('Starting Telegram bot...');
+      return m.startBot();
+    })
+    .catch((e) => console.error('Bot not started:', e));
+} else {
+  console.warn('Bot skipped: set BOT_TOKEN and RUN_BOT=1');
 }
