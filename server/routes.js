@@ -376,7 +376,7 @@ router.post('/parse-sms', async (req, res) => {
 // Чек: фото (base64 data URL) или текст/PDF
 router.post('/parse-receipt', async (req, res) => {
   if (!isGrokEnabled()) {
-    return res.status(400).json({ error: 'Нужен XAI_API_KEY на сервере' });
+    return res.status(400).json({ error: 'Нужен GEMINI_API_KEY на сервере' });
   }
   const categories = db.prepare('SELECT * FROM categories WHERE user_id=?').all(req.user.id);
   const names = categories.map((c) => c.name);
