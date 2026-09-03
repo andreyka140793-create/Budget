@@ -2,18 +2,14 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <!-- viewport-fit=cover критически важен для полноэкранного режима Telegram Mini App без белых полей -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#1c1c1e" />
   <title>Дзен-Бюджет</title>
   
-  <!-- Подключение актуального Telegram WebApp SDK -->
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <link rel="stylesheet" href="./src/style.css" />
 </head>
 <body>
   <div id="app">
-    <!-- Шапка приложения с балансом -->
     <header class="app-header">
       <div class="user-profile">
         <span class="user-greeting">Привет, <strong id="username">Пользователь</strong></span>
@@ -36,7 +32,6 @@
       </div>
     </header>
 
-    <!-- Навигация по вкладкам -->
     <nav class="tab-navigation">
       <button class="tab-btn active" data-tab="overview">Обзор</button>
       <button class="tab-btn" data-tab="transactions">История</button>
@@ -45,11 +40,9 @@
       <button class="tab-btn" data-tab="scanner">Сканер</button>
     </nav>
 
-    <!-- Основной контент вкладок -->
     <main class="content-container">
       
-      <!-- Вкладка 1: Обзор -->
-      <section id="tab-overview" class="tab-content active">
+      <section id="tab-overview" class="tab-content active" style="display: block;">
         <div class="quick-actions">
           <button id="btn-quick-expense" class="btn btn-primary">
             <span class="icon">+</span> Расход
@@ -73,8 +66,7 @@
         </div>
       </section>
 
-      <!-- Вкладка 2: Транзакции -->
-      <section id="tab-transactions" class="tab-content">
+      <section id="tab-transactions" class="tab-content" style="display: none;">
         <div class="filter-bar">
           <input type="text" id="search-input" placeholder="Поиск операций..." />
           <select id="filter-category">
@@ -86,8 +78,7 @@
         </div>
       </section>
 
-      <!-- Вкладка 3: Бюджеты по категориям -->
-      <section id="tab-budgets" class="tab-content">
+      <section id="tab-budgets" class="tab-content" style="display: none;">
         <div class="section-header">
           <h3>Месячные лимиты</h3>
           <button id="btn-add-budget" class="btn btn-sm">+ Лимит</button>
@@ -97,8 +88,7 @@
         </div>
       </section>
 
-      <!-- Вкладка 4: Копилки и финансовые цели -->
-      <section id="tab-savings" class="tab-content">
+      <section id="tab-savings" class="tab-content" style="display: none;">
         <div class="section-header">
           <h3>Накопления и цели</h3>
           <button id="btn-add-saving" class="btn btn-sm">+ Цель</button>
@@ -108,8 +98,7 @@
         </div>
       </section>
 
-      <!-- Вкладка 5: Распознавание SMS и документов -->
-      <section id="tab-scanner" class="tab-content">
+      <section id="tab-scanner" class="tab-content" style="display: none;">
         <div class="scanner-card">
           <h3>Распознавание SMS / Чека</h3>
           <p class="hint">Вставьте текст SMS банка или загрузите фото/PDF чека для автоматического внесения данных.</p>
@@ -133,8 +122,7 @@
 
     </main>
 
-    <!-- Модальное окно добавления транзакции -->
-    <div id="modal-transaction" class="modal-overlay hidden">
+    <div id="modal-transaction" class="modal-overlay hidden" style="display: none;">
       <div class="modal-window">
         <div class="modal-header">
           <h3 id="modal-title">Новая операция</h3>
@@ -180,7 +168,6 @@
 
   </div>
 
-  <!-- Подключение основного скрипта логики -->
   <script type="module" src="./src/main.js"></script>
 </body>
 </html>
