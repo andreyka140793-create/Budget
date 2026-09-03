@@ -651,7 +651,10 @@ document.getElementById('modal-ok').addEventListener('click', async () => {
   } catch (e) {
     console.error(e);
     document.getElementById('balance').textContent = 'Ошибка';
+    const msg = (e && e.message) ? e.message : String(e);
     document.getElementById('recent-list').innerHTML =
-      `<div class="empty">Не удалось загрузить данные.<br>${e.message}</div>`;
+      `<div class="empty">Не удалось загрузить данные.<br><b>${msg}</b></div>`;
+    const g = document.getElementById('greet');
+    if (g) g.textContent = msg;
   }
 })();
