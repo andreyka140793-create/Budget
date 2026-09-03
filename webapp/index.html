@@ -2,173 +2,185 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
-  <title>Дзен-бюджет</title>
+  <!-- viewport-fit=cover критически важен для полноэкранного режима Telegram Mini App без белых полей -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#1c1c1e" />
+  <title>Дзен-Бюджет</title>
+  
+  <!-- Подключение актуального Telegram WebApp SDK -->
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <link rel="stylesheet" href="./src/style.css?v=20260903-3" />
+  <link rel="stylesheet" href="./src/style.css" />
 </head>
 <body>
   <div id="app">
-    <header class="top">
-      <div class="top-line"><div class="greet" id="greet">Привет</div><button type="button" class="fullscreen-btn" id="btn-fullscreen" aria-label="На весь экран">⛶</button></div>
+    <!-- Шапка приложения с балансом -->
+    <header class="app-header">
+      <div class="user-profile">
+        <span class="user-greeting">Привет, <strong id="username">Пользователь</strong></span>
+        <span class="status-badge" id="sync-status">Онлайн</span>
+      </div>
+      
       <div class="balance-card">
-        <div class="label">Баланс по счетам</div>
-        <div class="value" id="balance">—</div>
-        <div class="month-row">
-          <span class="inc" id="monthIncome">+0</span>
-          <span class="exp" id="monthExpense">−0</span>
+        <div class="balance-title">Общий баланс</div>
+        <div class="balance-amount" id="total-balance">0 ₽</div>
+        <div class="balance-stats">
+          <div class="stat-item income">
+            <span class="stat-label">Доходы</span>
+            <span class="stat-value" id="month-income">+0 ₽</span>
+          </div>
+          <div class="stat-item expense">
+            <span class="stat-label">Расходы</span>
+            <span class="stat-value" id="month-expense">-0 ₽</span>
+          </div>
         </div>
-        <div id="accounts-mini" class="accounts-mini"></div>
       </div>
     </header>
 
-    <nav class="tabs">
-      <button type="button" class="tab active" data-tab="home">Главная</button>
-      <button class="tab" data-tab="ops">Операции</button>
-      <button class="tab" data-tab="budget">Бюджет</button>
-      <button class="tab" data-tab="piggy">Копилки</button>
-      <button class="tab" data-tab="more">Ещё</button>
+    <!-- Навигация по вкладкам -->
+    <nav class="tab-navigation">
+      <button class="tab-btn active" data-tab="overview">Обзор</button>
+      <button class="tab-btn" data-tab="transactions">История</button>
+      <button class="tab-btn" data-tab="budgets">Бюджеты</button>
+      <button class="tab-btn" data-tab="savings">Копилки</button>
+      <button class="tab-btn" data-tab="scanner">Сканер</button>
     </nav>
 
-    <main>
-      <section id="tab-home" class="panel active">
-        <h2 class="section-title">Динамика (6 мес.)</h2>
-        <div id="months-chart" class="months-chart"></div>
-        <h2 class="section-title">Расходы по категориям</h2>
-        <div id="categories-chart" class="cat-list"></div>
-        <h2 class="section-title">Последние операции</h2>
-        <div id="recent-list" class="tx-list"></div>
-      </section>
-
-      <section id="tab-ops" class="panel">
-        <div class="type-switch">
-          <button type="button" class="chip active" data-type="expense">Расход</button>
-          <button class="chip" data-type="income">Доход</button>
+    <!-- Основной контент вкладок -->
+    <main class="content-container">
+      
+      <!-- Вкладка 1: Обзор -->
+      <section id="tab-overview" class="tab-content active">
+        <div class="quick-actions">
+          <button id="btn-quick-expense" class="btn btn-primary">
+            <span class="icon">+</span> Расход
+          </button>
+          <button id="btn-quick-income" class="btn btn-secondary">
+            <span class="icon">+</span> Доход
+          </button>
+          <button id="btn-quick-scan" class="btn btn-outline">
+            <span class="icon">📷</span> Чек / SMS
+          </button>
         </div>
-        <form id="tx-form" class="form">
-          <label>Сумма
-            <input type="number" id="tx-amount" inputmode="decimal" step="0.01" min="0.01" placeholder="0" required />
-          </label>
-          <label>Категория
-            <select id="tx-category" required></select>
-          </label>
-          <label>Счёт
-            <select id="tx-account" required></select>
-          </label>
-          <label>Дата
-            <input type="date" id="tx-date" required />
-          </label>
-          <label>Комментарий
-            <input type="text" id="tx-note" placeholder="Необязательно" maxlength="120" />
-          </label>
-          <button type="submit" class="btn primary" id="tx-submit">Добавить расход</button>
-        </form>
-        <h2 class="section-title">История</h2>
-        <div id="all-tx" class="tx-list"></div>
-      </section>
 
-      <section id="tab-budget" class="panel">
-        <h2 class="section-title">Лимиты на месяц</h2>
-        <div id="budget-list" class="cat-list"></div>
-        <form id="budget-form" class="form">
-          <label>Категория расхода
-            <select id="budget-category"></select>
-          </label>
-          <label>Лимит (₽)
-            <input type="number" id="budget-amount" inputmode="decimal" min="0" step="100" placeholder="10000" required />
-          </label>
-          <button type="submit" class="btn primary">Сохранить лимит</button>
-        </form>
-      </section>
-
-      <section id="tab-piggy" class="panel">
-        <div id="piggy-list" class="piggy-list"></div>
-        <button type="button" class="btn secondary" id="btn-new-piggy">+ Новая копилка</button>
-        <form id="piggy-form" class="form hidden">
-          <label>Название
-            <input type="text" id="piggy-name" placeholder="Отпуск" required maxlength="40" />
-          </label>
-          <label>Цель (₽)
-            <input type="number" id="piggy-goal" inputmode="decimal" min="0" step="1" placeholder="50000" />
-          </label>
-          <button type="submit" class="btn primary">Создать</button>
-        </form>
-      </section>
-
-      <section id="tab-more" class="panel">
-        <h2 class="section-title">Счета</h2>
-        <div id="accounts-list" class="cat-list"></div>
-
-        <h2 class="section-title">Перевод между счетами</h2>
-        <form id="transfer-form" class="transfer-form">
-          <label>Откуда
-            <select id="tr-from"></select>
-          </label>
-          <label>Куда
-            <select id="tr-to"></select>
-          </label>
-          <label>Сумма
-            <input type="number" id="tr-amount" inputmode="decimal" step="0.01" min="0.01" placeholder="0" required />
-          </label>
-          <button type="submit" class="btn primary">Перевести</button>
-        </form>
-
-        <form id="account-form" class="form">
-          <label>Название счёта
-            <input type="text" id="acc-name" placeholder="Накопительный" required maxlength="40" />
-          </label>
-          <label>Тип
-            <select id="acc-type">
-              <option value="card">Карта</option>
-              <option value="cash">Наличные</option>
-              <option value="other">Другое</option>
-            </select>
-          </label>
-          <button type="submit" class="btn secondary">+ Добавить счёт</button>
-        </form>
-
-        <h2 class="section-title">Распознать SMS / чек</h2>
-        <p class="hint">Вставьте текст SMS банка или загрузите фото/PDF чека</p>
-        <textarea id="sms-text" rows="3" placeholder="Текст SMS банка..."></textarea>
-        <button type="button" class="btn secondary" id="btn-parse-sms" style="margin-top:8px">📱 Распознать SMS</button>
-
-        <label for="receipt-file" class="btn secondary file-btn" style="margin-top:12px;display:block;text-align:center;cursor:pointer">
-          🧾 Фото или PDF чека
-        </label>
-        <input type="file" id="receipt-file" accept="image/*,application/pdf,.pdf" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden" />
-        <p class="hint" id="sms-status"></p>
-        <div id="receipt-preview" class="hint" style="display:none;margin-top:6px"></div>
-
-        <h2 class="section-title">Напоминания в Telegram</h2>
-        <div class="settings-row">
-          <label class="switch-label">
-            <input type="checkbox" id="remind-enabled" />
-            Ежедневное напоминание
-          </label>
-          <label>Час
-            <select id="remind-hour"></select>
-          </label>
-          <label>Часовой пояс
-            <select id="remind-timezone">
-              <option>Europe/Warsaw</option><option>Europe/Moscow</option><option>Europe/Kyiv</option><option>Europe/Berlin</option><option>Europe/London</option><option>Europe/Paris</option><option>Europe/Rome</option><option>Europe/Madrid</option><option>Europe/Istanbul</option><option>Asia/Dubai</option><option>Asia/Tbilisi</option><option>Asia/Almaty</option><option>Asia/Tashkent</option><option>Asia/Bangkok</option><option>Asia/Singapore</option><option>Asia/Tokyo</option><option>Australia/Sydney</option><option>America/New_York</option><option>America/Chicago</option><option>America/Denver</option><option>America/Los_Angeles</option><option>UTC</option>
-            </select>
-          </label>
+        <div class="section-block">
+          <div class="section-header">
+            <h3>Последние операции</h3>
+            <button class="link-btn" id="btn-all-transactions">Все</button>
+          </div>
+          <div id="recent-transactions-list" class="transactions-list">
+            <div class="empty-state">Загрузка операций...</div>
+          </div>
         </div>
-        <p class="hint">Бот пришлёт сводку за день. Также: /remind on в чате с ботом.</p>
       </section>
+
+      <!-- Вкладка 2: Транзакции -->
+      <section id="tab-transactions" class="tab-content">
+        <div class="filter-bar">
+          <input type="text" id="search-input" placeholder="Поиск операций..." />
+          <select id="filter-category">
+            <option value="all">Все категории</option>
+          </select>
+        </div>
+        <div id="all-transactions-list" class="transactions-list">
+          <div class="empty-state">Нет записанных операций</div>
+        </div>
+      </section>
+
+      <!-- Вкладка 3: Бюджеты по категориям -->
+      <section id="tab-budgets" class="tab-content">
+        <div class="section-header">
+          <h3>Месячные лимиты</h3>
+          <button id="btn-add-budget" class="btn btn-sm">+ Лимит</button>
+        </div>
+        <div id="budgets-list" class="budgets-container">
+          <div class="empty-state">Лимиты еще не установлены</div>
+        </div>
+      </section>
+
+      <!-- Вкладка 4: Копилки и финансовые цели -->
+      <section id="tab-savings" class="tab-content">
+        <div class="section-header">
+          <h3>Накопления и цели</h3>
+          <button id="btn-add-saving" class="btn btn-sm">+ Цель</button>
+        </div>
+        <div id="savings-list" class="savings-container">
+          <div class="empty-state">У вас пока нет активных копилок</div>
+        </div>
+      </section>
+
+      <!-- Вкладка 5: Распознавание SMS и документов -->
+      <section id="tab-scanner" class="tab-content">
+        <div class="scanner-card">
+          <h3>Распознавание SMS / Чека</h3>
+          <p class="hint">Вставьте текст SMS банка или загрузите фото/PDF чека для автоматического внесения данных.</p>
+          
+          <div class="form-group">
+            <textarea id="sms-text-input" rows="4" placeholder="Вставьте текст банковского SMS..."></textarea>
+            <button id="btn-parse-sms" class="btn btn-primary btn-block">Распознать SMS</button>
+          </div>
+
+          <div class="divider">или</div>
+
+          <div class="file-upload-zone" id="drop-zone">
+            <input type="file" id="receipt-file-input" accept="image/*,application/pdf" hidden />
+            <label for="receipt-file-input" class="upload-label">
+              <span class="upload-icon">📄</span>
+              <span>Загрузить фото чека или PDF</span>
+            </label>
+          </div>
+        </div>
+      </section>
+
     </main>
 
-    <div id="modal" class="modal hidden">
-      <div class="modal-card">
-        <h3 id="modal-title">Пополнить</h3>
-        <input type="number" id="modal-amount" inputmode="decimal" step="0.01" min="0.01" placeholder="Сумма" />
-        <div class="modal-actions">
-          <button class="btn secondary" id="modal-cancel">Отмена</button>
-          <button class="btn primary" id="modal-ok">OK</button>
+    <!-- Модальное окно добавления транзакции -->
+    <div id="modal-transaction" class="modal-overlay hidden">
+      <div class="modal-window">
+        <div class="modal-header">
+          <h3 id="modal-title">Новая операция</h3>
+          <button class="close-btn" id="btn-close-modal">&times;</button>
         </div>
+        <form id="transaction-form" class="modal-body">
+          <div class="type-selector">
+            <button type="button" class="type-btn active" data-type="expense">Расход</button>
+            <button type="button" class="type-btn" data-type="income">Доход</button>
+          </div>
+
+          <div class="form-group">
+            <label for="input-amount">Сумма (₽)</label>
+            <input type="number" id="input-amount" step="0.01" placeholder="0.00" required />
+          </div>
+
+          <div class="form-group">
+            <label for="select-category">Категория</label>
+            <select id="select-category" required>
+              <option value="">Выберите категорию</option>
+              <option value="Продукты">Продукты</option>
+              <option value="Кафе и рестораны">Кафе и рестораны</option>
+              <option value="Транспорт">Транспорт</option>
+              <option value="Коммунальные">Коммунальные</option>
+              <option value="Развлечения">Развлечения</option>
+              <option value="Зарплата">Зарплата</option>
+              <option value="Прочее">Прочее</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="input-note">Заметка / Комментарий</label>
+            <input type="text" id="input-note" placeholder="Например: Пятерочка" />
+          </div>
+
+          <div class="modal-actions">
+            <button type="button" id="btn-cancel-transaction" class="btn btn-secondary">Отмена</button>
+            <button type="submit" id="btn-save-transaction" class="btn btn-primary">Сохранить</button>
+          </div>
+        </form>
       </div>
     </div>
+
   </div>
-  <script type="module" src="./src/main.js?v=20260903-3"></script>
+
+  <!-- Подключение основного скрипта логики -->
+  <script type="module" src="./src/main.js"></script>
 </body>
 </html>
