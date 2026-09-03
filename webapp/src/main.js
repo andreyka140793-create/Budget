@@ -2,6 +2,13 @@ const tg = window.Telegram?.WebApp;
 if (tg) {
   tg.ready();
   tg.expand();
+  try { tg.disableVerticalSwipes?.(); } catch {}
+  try {
+    // Полноэкранный режим (Telegram 8+)
+    if (typeof tg.requestFullscreen === 'function') tg.requestFullscreen();
+  } catch {}
+  try { tg.setHeaderColor('secondary_bg_color'); } catch {}
+  try { tg.setBackgroundColor('bg_color'); } catch {}
 }
 
 // ----- Theme from Telegram -----
@@ -389,14 +396,42 @@ document.getElementById('account-form').addEventListener('submit', async (e) => 
 
 
 
+
+function setStatus(msg) {
+  const el = document.getElementById('sms-status');
+  if (el) el.textContent = msg || '';
+}
+
 async function confirmAndSaveParsed(r, fallbackNote) {
   const sign = r.type === 'income' ? '+' : '−';
-  const ok = confirm(
-    `Распознано: ${sign}${fmt(r.amount)} (${r.type === 'income' ? 'доход' : 'расход'})\n` +
-      `Категория: ${r.category_name || '—'}\n` +
-      `${r.note || r.merchant || ''}\n\nЗаписать?`
-  );
-  if (!ok) return;
+  const title = 'Записать операцию?';
+  const message =
+    `${sign}${fmt(r.amount)} · ${r.type === 'income' ? 'доход' : 'расход'}\n` +
+    `${r.category_name || '—'}\n${r.note || r.merchant || fallbackNote || ''}`;
+
+  let ok = false;
+  if (tg?.showPopup) {
+    ok = await new Promise((resolve) => {
+      tg.showPopup(
+        {
+          title,
+          message: message.slice(0, 250),
+          buttons: [
+            { id: 'yes', type: 'default', text: 'Записать' },
+            { id: 'no', type: 'cancel', text: 'Отмена' },
+          ],
+        },
+        (id) => resolve(id === 'yes')
+      );
+    });
+  } else {
+    ok = confirm(`${title}\n\n${message}`);
+  }
+  if (!ok) {
+    setStatus('Отменено');
+    return;
+  }
+
   const acc = state.accounts[0];
   await api('/transactions', {
     method: 'POST',
@@ -409,21 +444,24 @@ async function confirmAndSaveParsed(r, fallbackNote) {
       date: r.date || new Date().toISOString().slice(0, 10),
     }),
   });
-  document.getElementById('sms-status').textContent = 'Записано ✓';
+  setStatus('Записано ✓');
   if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
   await loadDashboard();
 }
 
 document.getElementById('btn-parse-sms').addEventListener('click', async () => {
   const text = document.getElementById('sms-text').value.trim();
-  if (!text) return;
-  document.getElementById('sms-status').textContent = 'Распознаю…';
+  if (!text) {
+    setStatus('Вставьте текст SMS');
+    return;
+  }
+  setStatus('Распознаю SMS…');
   try {
     const r = await api('/parse-sms', { method: 'POST', body: JSON.stringify({ text }) });
     await confirmAndSaveParsed(r, text.slice(0, 80));
     document.getElementById('sms-text').value = '';
   } catch (e) {
-    document.getElementById('sms-status').textContent = e.message;
+    setStatus(e.message);
     alert(e.message);
   }
 });
@@ -432,37 +470,54 @@ function readFileAsDataURL(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
+    reader.onerror = () => reject(new Error('Не удалось прочитать файл'));
     reader.readAsDataURL(file);
   });
 }
 
-document.getElementById('btn-pick-receipt').addEventListener('click', () => {
-  document.getElementById('receipt-file').click();
-});
-
-document.getElementById('receipt-file').addEventListener('change', async (e) => {
-  const file = e.target.files?.[0];
-  if (!file) return;
-  document.getElementById('sms-status').textContent = 'Распознаю чек…';
-  try {
-    const dataUrl = await readFileAsDataURL(file);
-    let body;
-    if (file.type.startsWith('image/')) {
-      body = { image: dataUrl };
-    } else if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
-      body = { pdfBase64: dataUrl };
-    } else {
-      throw new Error('Нужны фото или PDF');
+const receiptInput = document.getElementById('receipt-file');
+if (receiptInput) {
+  receiptInput.addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) {
+      setStatus('Файл не выбран');
+      return;
     }
-    const r = await api('/parse-receipt', { method: 'POST', body: JSON.stringify(body) });
-    await confirmAndSaveParsed(r, file.name);
-  } catch (err) {
-    document.getElementById('sms-status').textContent = err.message;
-    alert(err.message);
-  }
-  e.target.value = '';
-});
+    const prev = document.getElementById('receipt-preview');
+    if (prev) {
+      prev.style.display = 'block';
+      prev.textContent = `Файл: ${file.name} (${Math.round(file.size / 1024)} КБ)`;
+    }
+    setStatus('Распознаю чек…');
+    try {
+      if (file.size > 7 * 1024 * 1024) {
+        throw new Error('Файл больше 7 МБ — сожмите или сделайте фото');
+      }
+      const dataUrl = await readFileAsDataURL(file);
+      const isPdf =
+        file.type === 'application/pdf' ||
+        file.name.toLowerCase().endsWith('.pdf') ||
+        (typeof dataUrl === 'string' && dataUrl.startsWith('data:application/pdf'));
+      const isImage =
+        file.type.startsWith('image/') ||
+        (typeof dataUrl === 'string' && dataUrl.startsWith('data:image'));
+
+      let body;
+      if (isImage) body = { image: dataUrl };
+      else if (isPdf) body = { pdfBase64: dataUrl };
+      else throw new Error('Нужны фото (JPG/PNG) или PDF');
+
+      setStatus(isPdf ? 'Читаю PDF…' : 'Читаю фото…');
+      const r = await api('/parse-receipt', { method: 'POST', body: JSON.stringify(body) });
+      await confirmAndSaveParsed(r, file.name);
+    } catch (err) {
+      console.error(err);
+      setStatus(err.message || String(err));
+      alert(err.message || String(err));
+    }
+    e.target.value = '';
+  });
+}
 
 
 document.getElementById('btn-backup').addEventListener('click', async () => {
