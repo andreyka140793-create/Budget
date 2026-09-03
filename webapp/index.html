@@ -132,11 +132,12 @@
         <textarea id="sms-text" rows="3" placeholder="Текст SMS банка..."></textarea>
         <button class="btn secondary" id="btn-parse-sms" style="margin-top:8px">📱 Распознать SMS</button>
 
-        <label class="file-label" style="margin-top:12px;display:block">
-          <input type="file" id="receipt-file" accept="image/*,application/pdf" hidden />
-          <span class="btn secondary" id="btn-pick-receipt" style="display:block;text-align:center;cursor:pointer">🧾 Фото или PDF чека</span>
+        <label for="receipt-file" class="btn secondary file-btn" style="margin-top:12px;display:block;text-align:center;cursor:pointer">
+          🧾 Фото или PDF чека
         </label>
+        <input type="file" id="receipt-file" accept="image/*,application/pdf,.pdf" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden" />
         <p class="hint" id="sms-status"></p>
+        <div id="receipt-preview" class="hint" style="display:none;margin-top:6px"></div>
 
         <h2 class="section-title">Бэкап</h2>
         <button class="btn secondary" id="btn-backup">💾 Бэкап базы сейчас</button>
