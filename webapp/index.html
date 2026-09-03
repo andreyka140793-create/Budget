@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
   <title>Дзен-бюджет</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <link rel="stylesheet" href="./src/style.css" />
+  <link rel="stylesheet" href="./src/style.css?v=20260903-3" />
 </head>
 <body>
   <div id="app">
     <header class="top">
-      <div class="greet" id="greet">Привет</div>
+      <div class="top-line"><div class="greet" id="greet">Привет</div><button type="button" class="fullscreen-btn" id="btn-fullscreen" aria-label="На весь экран">⛶</button></div>
       <div class="balance-card">
         <div class="label">Баланс по счетам</div>
         <div class="value" id="balance">—</div>
@@ -23,7 +23,7 @@
     </header>
 
     <nav class="tabs">
-      <button class="tab active" data-tab="home">Главная</button>
+      <button type="button" class="tab active" data-tab="home">Главная</button>
       <button class="tab" data-tab="ops">Операции</button>
       <button class="tab" data-tab="budget">Бюджет</button>
       <button class="tab" data-tab="piggy">Копилки</button>
@@ -42,7 +42,7 @@
 
       <section id="tab-ops" class="panel">
         <div class="type-switch">
-          <button class="chip active" data-type="expense">Расход</button>
+          <button type="button" class="chip active" data-type="expense">Расход</button>
           <button class="chip" data-type="income">Доход</button>
         </div>
         <form id="tx-form" class="form">
@@ -83,7 +83,7 @@
 
       <section id="tab-piggy" class="panel">
         <div id="piggy-list" class="piggy-list"></div>
-        <button class="btn secondary" id="btn-new-piggy">+ Новая копилка</button>
+        <button type="button" class="btn secondary" id="btn-new-piggy">+ Новая копилка</button>
         <form id="piggy-form" class="form hidden">
           <label>Название
             <input type="text" id="piggy-name" placeholder="Отпуск" required maxlength="40" />
@@ -130,7 +130,7 @@
         <h2 class="section-title">Распознать SMS / чек</h2>
         <p class="hint">Вставьте текст SMS банка или загрузите фото/PDF чека</p>
         <textarea id="sms-text" rows="3" placeholder="Текст SMS банка..."></textarea>
-        <button class="btn secondary" id="btn-parse-sms" style="margin-top:8px">📱 Распознать SMS</button>
+        <button type="button" class="btn secondary" id="btn-parse-sms" style="margin-top:8px">📱 Распознать SMS</button>
 
         <label for="receipt-file" class="btn secondary file-btn" style="margin-top:12px;display:block;text-align:center;cursor:pointer">
           🧾 Фото или PDF чека
@@ -169,6 +169,6 @@
       </div>
     </div>
   </div>
-  <script type="module" src="./src/main.js"></script>
+  <script type="module" src="./src/main.js?v=20260903-3"></script>
 </body>
 </html>
