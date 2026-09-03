@@ -3,7 +3,7 @@ meta:
   tool: npm
 
 build:
-  command: npm install && cd webapp && npm install && npm run build && cd ..
+  command: npm install
 
 run:
   command: node server/index.js

@@ -7,9 +7,8 @@
     "dev": "node --watch server/index.js",
     "start": "node server/index.js",
     "bot": "node bot/index.js",
-    "build": "cd webapp && npm install && npm run build",
-    "build:web": "cd webapp && npm run build",
-    "postinstall": "echo \"Run: npm run build\""
+    "build": "echo \"No build needed — serving webapp source\"",
+    "build:web": "cd webapp && npm run build"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",
