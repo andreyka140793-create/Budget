@@ -204,7 +204,7 @@ function createBot() {
   });
 
   bot.command('ask', async (ctx) => {
-    if (!isGrokEnabled()) return ctx.reply('Нужен XAI_API_KEY');
+    if (!isGrokEnabled()) return ctx.reply('Нужен GEMINI_API_KEY');
     const q = (ctx.match || '').toString().trim() || 'Кратко оцени бюджет за месяц';
     const user = getOrCreateUser(ctx.from.id, ctx.from.first_name || '');
     await ctx.replyWithChatAction('typing');
@@ -281,7 +281,7 @@ function createBot() {
   }
 
   bot.on('message:photo', async (ctx) => {
-    if (!isGrokEnabled()) return ctx.reply('Нужен XAI_API_KEY');
+    if (!isGrokEnabled()) return ctx.reply('Нужен GEMINI_API_KEY');
     const user = getOrCreateUser(ctx.from.id, ctx.from.first_name || '');
     await ctx.replyWithChatAction('typing');
     try {
@@ -308,7 +308,7 @@ function createBot() {
     const isPdf = mime === 'application/pdf' || name.endsWith('.pdf');
 
     if (!isImage && !isPdf) return ctx.reply('Пришлите фото или PDF чека');
-    if (!isGrokEnabled()) return ctx.reply('Нужен XAI_API_KEY');
+    if (!isGrokEnabled()) return ctx.reply('Нужен GEMINI_API_KEY');
 
     await ctx.replyWithChatAction('typing');
     try {
