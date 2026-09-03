@@ -1,0 +1,9 @@
+meta:
+  environment: node
+  tool: npm
+
+build:
+  command: npm install && cd webapp && npm install && npm run build && cd ..
+
+run:
+  command: node server/index.js

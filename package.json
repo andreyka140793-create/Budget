@@ -1,0 +1,22 @@
+{
+  "name": "dzen-budget",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch server/index.js",
+    "start": "node server/index.js",
+    "bot": "node bot/index.js",
+    "build": "cd webapp && npm install && npm run build",
+    "build:web": "cd webapp && npm run build",
+    "postinstall": "echo \"Run: npm run build\""
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "grammy": "^1.30.0",
+    "nanoid": "^5.0.7"
+  }
+}
