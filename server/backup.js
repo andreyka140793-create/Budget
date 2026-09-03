@@ -1,25 +1,61 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { config } from './config.js';
-import db from './db.js';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-function ensureDir(){fs.mkdirSync(config.backupDir,{recursive:true});}
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const dataDir = process.env.DATA_DIR || (process.env.AMVERA === '1' ? '/data' : path.join(__dirname, '..', 'data'));
+const dbPath = path.join(dataDir, 'budget.db');
+const backupDir = path.join(dataDir, 'backups');
 
-export function createBackup(){
-  ensureDir();
-  const stamp=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
-  const dest=path.join(config.backupDir,`budget-${stamp}.db`);
-  try{
-    db.pragma('wal_checkpoint(PASSIVE)');
-    // better-sqlite3 backup is async; for the synchronous HTTP endpoint we use VACUUM INTO.
-    // The destination is unique, so the operation is atomic from the app's perspective.
-    db.prepare('VACUUM INTO ?').run(dest);
-    const files=fs.readdirSync(config.backupDir).filter(f=>/^budget-.*\.db$/.test(f)).map(f=>({f,t:fs.statSync(path.join(config.backupDir,f)).mtimeMs})).sort((a,b)=>b.t-a.t);
-    for(const extra of files.slice(14))fs.unlinkSync(path.join(config.backupDir,extra.f));
-    return {ok:true,file:path.basename(dest),at:stamp};
-  }catch(e){try{if(fs.existsSync(dest))fs.unlinkSync(dest);}catch{};return {ok:false,error:e.message};}
+function ensureDir() {
+  if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
 }
 
-export function listBackups(){ensureDir();return fs.readdirSync(config.backupDir).filter(f=>/^budget-.*\.db$/.test(f)).map(f=>{const s=fs.statSync(path.join(config.backupDir,f));return {file:f,size:s.size,mtime:s.mtime.toISOString()};}).sort((a,b)=>b.mtime.localeCompare(a.mtime));}
+export function createBackup() {
+  try {
+    ensureDir();
+    if (!fs.existsSync(dbPath)) {
+      return { ok: false, error: 'База ещё не создана' };
+    }
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const dest = path.join(backupDir, `budget-${stamp}.db`);
+    fs.copyFileSync(dbPath, dest);
 
-export function startDailyBackupScheduler(){let last='';setInterval(()=>{const d=new Date();const key=d.toISOString().slice(0,10);if(d.getHours()===3&&d.getMinutes()<2&&last!==key){last=key;console.log('Daily backup:',createBackup());}},60_000).unref();}
+    // Храним максимум 14 бэкапов
+    const files = fs.readdirSync(backupDir)
+      .filter((f) => f.endsWith('.db'))
+      .map((f) => ({ f, t: fs.statSync(path.join(backupDir, f)).mtimeMs }))
+      .sort((a, b) => b.t - a.t);
+    for (const extra of files.slice(14)) {
+      fs.unlinkSync(path.join(backupDir, extra.f));
+    }
+
+    return { ok: true, file: path.basename(dest), at: stamp };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+export function listBackups() {
+  ensureDir();
+  return fs.readdirSync(backupDir)
+    .filter((f) => f.endsWith('.db'))
+    .map((f) => {
+      const st = fs.statSync(path.join(backupDir, f));
+      return { file: f, size: st.size, mtime: st.mtime.toISOString() };
+    })
+    .sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
+}
+
+/** Ежедневный бэкап около 03:00 локального времени сервера */
+export function startDailyBackupScheduler() {
+  let lastDay = -1;
+  setInterval(() => {
+    const now = new Date();
+    if (now.getHours() === 3 && now.getMinutes() < 2 && now.getDate() !== lastDay) {
+      lastDay = now.getDate();
+      const r = createBackup();
+      console.log('Daily backup:', r);
+    }
+  }, 60_000);
+}
