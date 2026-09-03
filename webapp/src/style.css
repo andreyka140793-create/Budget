@@ -329,3 +329,4 @@ textarea {
   font-family: inherit;
   resize: vertical;
 }
+.tx-delete{margin:4px 0 8px auto;display:block;border:0;border-radius:10px;padding:7px 12px;background:#c62828;color:#fff;font-weight:600;cursor:pointer}
