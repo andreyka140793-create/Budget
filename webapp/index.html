@@ -10,6 +10,7 @@
 </head>
 <body>
   <div id="app">
+    <!-- Шапка приложения с балансом -->
     <header class="app-header">
       <div class="user-profile">
         <span class="user-greeting">Привет, <strong id="username">Пользователь</strong></span>
@@ -32,6 +33,7 @@
       </div>
     </header>
 
+    <!-- Навигация по вкладкам -->
     <nav class="tab-navigation">
       <button class="tab-btn active" data-tab="overview">Обзор</button>
       <button class="tab-btn" data-tab="transactions">История</button>
@@ -40,17 +42,19 @@
       <button class="tab-btn" data-tab="scanner">Сканер</button>
     </nav>
 
+    <!-- Основной контент вкладок -->
     <main class="content-container">
       
+      <!-- Вкладка 1: Обзор -->
       <section id="tab-overview" class="tab-content active" style="display: block;">
         <div class="quick-actions">
-          <button id="btn-quick-expense" class="btn btn-primary">
+          <button id="btn-quick-expense" class="btn btn-primary" type="button">
             <span class="icon">+</span> Расход
           </button>
-          <button id="btn-quick-income" class="btn btn-secondary">
+          <button id="btn-quick-income" class="btn btn-secondary" type="button">
             <span class="icon">+</span> Доход
           </button>
-          <button id="btn-quick-scan" class="btn btn-outline">
+          <button id="btn-quick-scan" class="btn btn-outline" type="button">
             <span class="icon">📷</span> Чек / SMS
           </button>
         </div>
@@ -58,7 +62,7 @@
         <div class="section-block">
           <div class="section-header">
             <h3>Последние операции</h3>
-            <button class="link-btn" id="btn-all-transactions">Все</button>
+            <button class="link-btn" id="btn-all-transactions" type="button">Все</button>
           </div>
           <div id="recent-transactions-list" class="transactions-list">
             <div class="empty-state">Загрузка операций...</div>
@@ -66,6 +70,7 @@
         </div>
       </section>
 
+      <!-- Вкладка 2: Транзакции -->
       <section id="tab-transactions" class="tab-content" style="display: none;">
         <div class="filter-bar">
           <input type="text" id="search-input" placeholder="Поиск операций..." />
@@ -78,26 +83,29 @@
         </div>
       </section>
 
+      <!-- Вкладка 3: Бюджеты по категориям -->
       <section id="tab-budgets" class="tab-content" style="display: none;">
         <div class="section-header">
           <h3>Месячные лимиты</h3>
-          <button id="btn-add-budget" class="btn btn-sm">+ Лимит</button>
+          <button id="btn-add-budget" class="btn btn-sm" type="button">+ Лимит</button>
         </div>
         <div id="budgets-list" class="budgets-container">
           <div class="empty-state">Лимиты еще не установлены</div>
         </div>
       </section>
 
+      <!-- Вкладка 4: Копилки и финансовые цели -->
       <section id="tab-savings" class="tab-content" style="display: none;">
         <div class="section-header">
           <h3>Накопления и цели</h3>
-          <button id="btn-add-saving" class="btn btn-sm">+ Цель</button>
+          <button id="btn-add-saving" class="btn btn-sm" type="button">+ Цель</button>
         </div>
         <div id="savings-list" class="savings-container">
           <div class="empty-state">У вас пока нет активных копилок</div>
         </div>
       </section>
 
+      <!-- Вкладка 5: Распознавание SMS и документов -->
       <section id="tab-scanner" class="tab-content" style="display: none;">
         <div class="scanner-card">
           <h3>Распознавание SMS / Чека</h3>
@@ -105,7 +113,7 @@
           
           <div class="form-group">
             <textarea id="sms-text-input" rows="4" placeholder="Вставьте текст банковского SMS..."></textarea>
-            <button id="btn-parse-sms" class="btn btn-primary btn-block">Распознать SMS</button>
+            <button id="btn-parse-sms" class="btn btn-primary btn-block" type="button">Распознать SMS</button>
           </div>
 
           <div class="divider">или</div>
@@ -122,11 +130,12 @@
 
     </main>
 
-    <div id="modal-transaction" class="modal-overlay hidden" style="display: none;">
+    <!-- Модальное окно добавления транзакции -->
+    <div id="modal-transaction" class="modal-overlay hidden">
       <div class="modal-window">
         <div class="modal-header">
           <h3 id="modal-title">Новая операция</h3>
-          <button class="close-btn" id="btn-close-modal">&times;</button>
+          <button class="close-btn" id="btn-close-modal" type="button">&times;</button>
         </div>
         <form id="transaction-form" class="modal-body">
           <div class="type-selector">
