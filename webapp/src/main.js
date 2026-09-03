@@ -1,7 +1,7 @@
-// Инициализация Telegram WebApp SDK
+import './style.css';
+
 const tg = window.Telegram?.WebApp;
 
-// Хранилище состояния Mini App
 const state = {
   activeTab: 'overview',
   transactionType: 'expense',
@@ -10,40 +10,31 @@ const state = {
   savings: []
 };
 
-/**
- * Инициализация Telegram WebApp и полноэкранного режима
- */
 export function initTelegramApp() {
   if (!tg) {
-    console.warn('Telegram WebApp SDK не обнаружен (запуск в браузере)');
+    console.warn('Telegram WebApp SDK не обнаружен (запуск вне Telegram)');
     return;
   }
 
   try {
-    // 1. Подтверждаем готовность приложения
     tg.ready();
-
-    // 2. Раскрываем область видимости
     tg.expand();
 
-    // 3. Запрашиваем полноэкранный режим (Bot API 8.0+)
     if (typeof tg.requestFullscreen === 'function') {
       tg.requestFullscreen();
     }
 
-    // 4. Отключаем свайп вниз для предотвращения закрытия при тапах по кнопкам
     if (typeof tg.disableVerticalSwipes === 'function') {
       tg.disableVerticalSwipes();
     }
 
-    // 5. Устанавливаем системные цвета
     if (tg.colorScheme) {
       document.body.classList.add(tg.colorScheme);
     }
+
     tg.setHeaderColor?.('secondary_bg_color');
     tg.setBackgroundColor?.('bg_color');
 
-    // Отображаем имя пользователя из Telegram, если доступно
     const user = tg.initDataUnsafe?.user;
     const usernameEl = document.getElementById('username');
     if (usernameEl && user) {
@@ -54,10 +45,7 @@ export function initTelegramApp() {
   }
 }
 
-/**
- * Универсальный безопасный обработчик нажатий для мобильных устройств
- */
-export function bindClick(elementOrId, handler) {
+function bindClick(elementOrId, handler) {
   const el = typeof elementOrId === 'string' ? document.getElementById(elementOrId) : elementOrId;
   if (!el) return;
 
@@ -67,7 +55,6 @@ export function bindClick(elementOrId, handler) {
     e.preventDefault();
     e.stopPropagation();
 
-    // Виброотклик Telegram при нажатии на кнопку
     if (tg?.HapticFeedback) {
       tg.HapticFeedback.impactOccurred('light');
     }
@@ -88,9 +75,6 @@ export function bindClick(elementOrId, handler) {
   });
 }
 
-/**
- * Настройка переключения вкладок
- */
 function setupTabs() {
   const tabButtons = document.querySelectorAll('.tab-btn');
   const tabContents = document.querySelectorAll('.tab-content');
@@ -101,12 +85,16 @@ function setupTabs() {
       if (!targetTab) return;
 
       tabButtons.forEach(b => b.classList.remove('active'));
-      tabContents.forEach(c => c.classList.remove('active'));
+      tabContents.forEach(c => {
+        c.classList.remove('active');
+        c.style.display = 'none';
+      });
 
       btn.classList.add('active');
       const activeContent = document.getElementById(`tab-${targetTab}`);
       if (activeContent) {
         activeContent.classList.add('active');
+        activeContent.style.display = 'block';
       }
 
       state.activeTab = targetTab;
@@ -114,9 +102,6 @@ function setupTabs() {
   });
 }
 
-/**
- * Настройка модального окна добавления транзакций
- */
 function setupModal() {
   const modal = document.getElementById('modal-transaction');
   const btnClose = document.getElementById('btn-close-modal');
@@ -144,7 +129,6 @@ function setupModal() {
   if (btnClose) bindClick(btnClose, closeModal);
   if (btnCancel) bindClick(btnCancel, closeModal);
 
-  // Переключение типов (Расход / Доход) внутри модального окна
   typeBtns.forEach(btn => {
     bindClick(btn, () => {
       const type = btn.getAttribute('data-type');
@@ -154,7 +138,6 @@ function setupModal() {
     });
   });
 
-  // Отправка формы транзакции
   if (form) {
     form.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -177,11 +160,9 @@ function setupModal() {
   }
 }
 
-/**
- * Настройка сканера и загрузки файлов
- */
 function setupScanner() {
   const btnScan = document.getElementById('btn-quick-scan');
+  const btnAllTx = document.getElementById('btn-all-transactions');
   const btnParseSms = document.getElementById('btn-parse-sms');
   const smsInput = document.getElementById('sms-text-input');
   const fileInput = document.getElementById('receipt-file-input');
@@ -190,6 +171,13 @@ function setupScanner() {
     bindClick(btnScan, () => {
       const scannerTabBtn = document.querySelector('.tab-btn[data-tab="scanner"]');
       if (scannerTabBtn) scannerTabBtn.click();
+    });
+  }
+
+  if (btnAllTx) {
+    bindClick(btnAllTx, () => {
+      const historyTabBtn = document.querySelector('.tab-btn[data-tab="transactions"]');
+      if (historyTabBtn) historyTabBtn.click();
     });
   }
 
@@ -214,7 +202,6 @@ function setupScanner() {
   }
 }
 
-// Запуск инициализации после загрузки DOM
 document.addEventListener('DOMContentLoaded', () => {
   initTelegramApp();
   setupTabs();
