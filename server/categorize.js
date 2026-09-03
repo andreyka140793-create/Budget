@@ -1,66 +1,43 @@
-/**
- * Автокатегории по тексту (SMS / комментарий / merchant)
- * Правила: подстрока (нижний регистр) → имя категории расхода
- */
 export const MERCHANT_RULES = [
-  // Продукты
-  { keys: ['пятер', 'пятёр', 'pyater', 'magnit', 'магнит', 'перекр', 'перекресток', 'лента', 'lenta', 'ашан', 'auchan', 'дикси', 'верны', 'вкусвилл', 'вкусвил', 'самокат', 'азбука вкуса', 'metro', 'metro c&c', 'окей', 'okey'], category: 'Продукты' },
-  // Кафе
-  { keys: ['яндекс еда', 'yandex eda', 'delivery club', 'deliveryclub', 'самокат еда', 'купер', 'kuper', 'ресторан', 'кафе', 'кофе', 'coffee', 'starbucks', 'шоколадниц', 'теремок', 'бургер', 'kfc', 'макдон', 'mcdonald', 'vkusno', 'додо', 'dodo', 'pizza', 'суши', 'тайм кафе'], category: 'Кафе' },
-  // Транспорт
-  { keys: ['такси', 'taxi', 'яндекс го', 'yandex go', 'uber', 'ситимобил', 'метро', 'мосгорпас', 'тройка', 'парковк', 'parking', 'азс', 'газпром нефть', 'лукойл', 'роснефть', 'shell', 'аэрофлот', 'rzd', 'ржд', 'туту', 'tutu', 'blablacar'], category: 'Транспорт' },
-  // Связь
-  { keys: ['мтс', 'mts', 'мегафон', 'megafon', 'билайн', 'beeline', 'теле2', 'tele2', 'ростелеком', 'yota', 'йота', 'тинькофф мобайл', 'т-мобайл'], category: 'Связь' },
-  // Жильё / коммуналка
-  { keys: ['жкх', 'квартплат', 'гку', 'мосэнерго', 'мособлгаз', 'водоканал', 'тсж', 'ук ', 'капитальн', 'интернет дом', 'дом.ру', 'домру', 'роустелеком'], category: 'Жильё' },
-  // Здоровье
-  { keys: ['аптека', 'pharmacy', 'здравсити', 'ригла', '36,6', 'стомат', 'клиник', 'инвитро', 'гемотест', 'больниц'], category: 'Здоровье' },
-  // Одежда
-  { keys: ['zara', 'h&m', 'остин', 'ostin', 'lamoda', 'la moda', 'wildberries одеж', 'спортмастер', 'demix', 'reserv'], category: 'Одежда' },
-  // Развлечения
-  { keys: ['кино', 'cinema', 'театр', 'steam', 'playstation', 'xbox', 'spotify', 'ivi', 'okko', 'кинопоиск', 'netflix', 'youtube', 'vk music', 'яндекс плюс', 'yandex plus'], category: 'Развлечения' },
-  // Маркетплейсы → чаще Прочее или Продукты; кладём в Прочее
-  { keys: ['wildberries', 'вайлдберриз', 'wb ', 'ozon', 'озон', 'aliexpress', 'алиэкспресс', 'avito', 'авито', 'мегамаркет', 'citilink', 'dns ', 'м.видео', 'мвидео', 'eldorado', 'эльдорадо'], category: 'Прочее' },
+  { keys: ['пятер', 'пятёр', 'pyater', 'magnit', 'магнит', 'перекр', 'лента', 'lenta', 'ашан', 'auchan', 'дикси', 'верны', 'вкусвил', 'самокат', 'азбука вкуса', 'metro', 'окей', 'okey', 'билла', 'спар', 'spar'], category: 'Продукты' },
+  { keys: ['яндекс еда', 'yandex eda', 'delivery club', 'deliveryclub', 'купер', 'kuper', 'ресторан', 'кафе', 'кофе', 'coffee', 'starbucks', 'шоколадниц', 'теремок', 'бургер', 'kfc', 'макдон', 'mcdonald', 'vkusno', 'додо', 'dodo', 'pizza', 'суши', 'кофейн'], category: 'Кафе' },
+  { keys: ['такси', 'taxi', 'яндекс го', 'yandex go', 'uber', 'ситимобил', 'метро', 'мосгорпас', 'тройка', 'парковк', 'parking', 'азс', 'газпром нефть', 'лукойл', 'роснефт', 'shell', 'аэрофлот', 'ржд', 'rzd', 'туту', 'tutu', 'blablacar', 'каршеринг', 'делимобиль'], category: 'Транспорт' },
+  { keys: ['мтс', 'mts', 'мегафон', 'megafon', 'билайн', 'beeline', 'теле2', 'tele2', 'ростелеком', 'yota', 'йота', 'т-мобайл', 'тинькофф мобайл'], category: 'Связь' },
+  { keys: ['жкх', 'квартплат', 'мосэнерго', 'мособлгаз', 'водоканал', 'тсж', 'капремонт', 'дом.ру', 'домру', 'аренда квартир', 'коммунальн'], category: 'Жильё' },
+  { keys: ['аптека', 'pharmacy', 'здравсити', 'ригла', '36,6', 'стомат', 'клиник', 'инвитро', 'гемотест', 'больниц', 'медиц'], category: 'Здоровье' },
+  { keys: ['zara', 'h&m', 'остин', 'ostin', 'lamoda', 'спортмастер', 'demix', 'reserved', 'uniqlo', 'befree'], category: 'Одежда' },
+  { keys: ['кино', 'cinema', 'театр', 'steam', 'playstation', 'xbox', 'spotify', 'ivi', 'okko', 'кинопоиск', 'netflix', 'youtube', 'vk music', 'яндекс плюс', 'yandex plus', 'концерт', 'музей'], category: 'Развлечения' },
+  { keys: ['wildberries', 'вайлдберриз', 'ozon', 'озон', 'aliexpress', 'алиэкспресс', 'avito', 'авито', 'мегамаркет', 'citilink', 'dns', 'м.видео', 'мвидео', 'эльдорадо', 'eldorado', 'леруа', 'икеа', 'ikea'], category: 'Прочее' },
+];
+
+const INCOME_RULES = [
+  { keys: ['зарплат', 'salary', 'аванс', 'премия', 'оклад'], category: 'Зарплата' },
+  { keys: ['подработ', 'фриланс', 'заказ', 'гонорар'], category: 'Подработка' },
+  { keys: ['подарок', 'подарил', 'gift'], category: 'Подарок' },
 ];
 
 /**
  * @param {string} text
  * @param {'expense'|'income'} type
  * @param {Array<{id:number,name:string,type:string}>} categories
- * @returns {{ category_id: number|null, category_name: string|null, confidence: string }}
  */
-export function suggestCategory(text, type, categories) {
-  if (!text || type !== 'expense') {
-    // для дохода — зарплата по ключевым словам
-    if (type === 'income') {
-      const low = (text || '').toLowerCase();
-      if (/зарплат|salary|аванс|премия/.test(low)) {
-        const c = categories.find((x) => x.type === 'income' && /зарплат/i.test(x.name));
-        if (c) return { category_id: c.id, category_name: c.name, confidence: 'high' };
-      }
-    }
-    const fallback = categories.find((c) => c.type === type);
-    return {
-      category_id: fallback?.id ?? null,
-      category_name: fallback?.name ?? null,
-      confidence: 'low',
-    };
-  }
+export function suggestCategory(text, type, categories = []) {
+  const low = String(text || '').toLowerCase();
+  const ofType = categories.filter((c) => c.type === type);
+  const byName = (name) => ofType.find((c) => c.name.toLowerCase() === name.toLowerCase());
 
-  const low = text.toLowerCase();
-  for (const rule of MERCHANT_RULES) {
+  const rules = type === 'income' ? INCOME_RULES : MERCHANT_RULES;
+  for (const rule of rules) {
     if (rule.keys.some((k) => low.includes(k))) {
-      const c = categories.find((x) => x.type === 'expense' && x.name === rule.category);
-      if (c) {
-        return { category_id: c.id, category_name: c.name, confidence: 'high' };
-      }
+      const c = byName(rule.category);
+      if (c) return { category_id: c.id, category_name: c.name, confidence: 'high' };
     }
   }
 
-  const other = categories.find((c) => c.type === 'expense' && c.name === 'Прочее');
+  const fallback = byName('Прочее') || ofType[0];
   return {
-    category_id: other?.id ?? categories.find((c) => c.type === 'expense')?.id ?? null,
-    category_name: other?.name ?? 'Прочее',
+    category_id: fallback?.id ?? null,
+    category_name: fallback?.name ?? null,
     confidence: 'low',
   };
 }
