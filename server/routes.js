@@ -9,14 +9,28 @@ import { isGrokEnabled, parseReceiptImage, parseReceiptText, parseTransactionWit
 const router = Router();
 
 function auth(req, res, next) {
-  const initData = req.headers['x-telegram-init-data'] || '';
-  const botToken = process.env.BOT_TOKEN || '';
-  let tgUser = validateInitData(initData, botToken);
-  if (!tgUser) tgUser = devUser(initData);
-  if (!tgUser?.id) return res.status(401).json({ error: 'Unauthorized' });
-  req.user = getOrCreateUser(tgUser.id, tgUser.first_name || tgUser.username || '');
-  req.tgUser = tgUser;
-  next();
+  try {
+    const initData = req.headers['x-telegram-init-data'] || '';
+    const botToken = process.env.BOT_TOKEN || '';
+    let tgUser = null;
+    try {
+      tgUser = validateInitData(initData, botToken);
+    } catch (e) {
+      console.warn('validateInitData', e.message);
+    }
+    if (!tgUser) tgUser = devUser(initData);
+    if (!tgUser?.id) {
+      return res.status(401).json({
+        error: 'Unauthorized: нет данных Telegram. Откройте через кнопку бота.',
+      });
+    }
+    req.user = getOrCreateUser(tgUser.id, tgUser.first_name || tgUser.username || '');
+    req.tgUser = tgUser;
+    next();
+  } catch (e) {
+    console.error('auth error', e);
+    res.status(500).json({ error: 'Auth: ' + e.message });
+  }
 }
 
 router.use(auth);
@@ -35,18 +49,19 @@ function monthBounds(offset = 0) {
 
 // ===== Dashboard =====
 router.get('/dashboard', (req, res) => {
+  try {
   const uid = req.user.id;
   const { from, to } = monthBounds(0);
 
   const income = db.prepare(
     `SELECT COALESCE(SUM(amount),0) as t FROM transactions
      WHERE user_id=? AND type='income' AND date>=? AND date<=?`
-  ).get(uid, from, to).t;
+  ).get(uid, from, to)?.t ?? 0;
 
   const expense = db.prepare(
     `SELECT COALESCE(SUM(amount),0) as t FROM transactions
      WHERE user_id=? AND type='expense' AND date>=? AND date<=?`
-  ).get(uid, from, to).t;
+  ).get(uid, from, to)?.t ?? 0;
 
   const accounts = db.prepare('SELECT * FROM accounts WHERE user_id=? ORDER BY id').all(uid);
   const balance = accounts.reduce((s, a) => s + a.balance, 0);
@@ -85,18 +100,22 @@ router.get('/dashboard', (req, res) => {
   const piggies = db.prepare('SELECT * FROM piggy_banks WHERE user_id=? ORDER BY id').all(uid);
 
   res.json({
-    balance,
-    accounts,
-    month: { income, expense, balance: income - expense, from, to },
-    byCategory,
-    budgets,
-    recent,
-    piggies,
+    balance: balance || 0,
+    accounts: accounts || [],
+    month: { income: income || 0, expense: expense || 0, balance: (income || 0) - (expense || 0), from, to },
+    byCategory: byCategory || [],
+    budgets: budgets || [],
+    recent: recent || [],
+    piggies: piggies || [],
     currency: req.user.currency || 'RUB',
     name: req.user.name,
     remind_enabled: !!req.user.remind_enabled,
     remind_hour: req.user.remind_hour ?? 21,
   });
+  } catch (e) {
+    console.error('/dashboard', e);
+    res.status(500).json({ error: e.message || String(e) });
+  }
 });
 
 // ===== Charts (несколько месяцев) =====
@@ -109,11 +128,11 @@ router.get('/stats/months', (req, res) => {
     const income = db.prepare(
       `SELECT COALESCE(SUM(amount),0) as t FROM transactions
        WHERE user_id=? AND type='income' AND date>=? AND date<=?`
-    ).get(uid, from, to).t;
+    ).get(uid, from, to)?.t ?? 0;
     const expense = db.prepare(
       `SELECT COALESCE(SUM(amount),0) as t FROM transactions
        WHERE user_id=? AND type='expense' AND date>=? AND date<=?`
-    ).get(uid, from, to).t;
+    ).get(uid, from, to)?.t ?? 0;
     result.push({ label, from, to, income, expense });
   }
   res.json(result);
@@ -489,11 +508,11 @@ export function getUserDaySummary(userId) {
   const expense = db.prepare(
     `SELECT COALESCE(SUM(amount),0) as t FROM transactions
      WHERE user_id=? AND type='expense' AND date=?`
-  ).get(userId, today).t;
+  ).get(userId, today)?.t ?? 0;
   const income = db.prepare(
     `SELECT COALESCE(SUM(amount),0) as t FROM transactions
      WHERE user_id=? AND type='income' AND date=?`
-  ).get(userId, today).t;
+  ).get(userId, today)?.t ?? 0;
   const count = db.prepare(
     `SELECT COUNT(*) as c FROM transactions WHERE user_id=? AND date=?`
   ).get(userId, today).c;

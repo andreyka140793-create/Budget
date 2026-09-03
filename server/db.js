@@ -1,6 +1,5 @@
 /**
- * SQLite через sql.js (без native-модулей — стабильно на Amvera)
- * API совместим с better-sqlite3: prepare().get/all/run, transaction, exec
+ * SQLite через sql.js (без native) — API как у better-sqlite3
  */
 import initSqlJs from 'sql.js';
 import path from 'path';
@@ -13,9 +12,15 @@ const require = createRequire(import.meta.url);
 const dataDir =
   process.env.DATA_DIR ||
   (process.env.AMVERA === '1' ? '/data' : path.join(__dirname, '..', 'data'));
-if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-
-const dbPath = path.join(dataDir, 'budget.db');
+if (!fs.existsSync(dataDir)) {
+  try {
+    fs.mkdirSync(dataDir, { recursive: true });
+  } catch (e) {
+    console.warn('mkdir dataDir failed, fallback to /tmp', e.message);
+  }
+}
+const effectiveDataDir = fs.existsSync(dataDir) ? dataDir : '/tmp';
+const dbPath = path.join(effectiveDataDir, 'budget.db');
 
 let wasmPath;
 try {
@@ -23,15 +28,20 @@ try {
 } catch {
   wasmPath = null;
 }
+
 const SQL = await initSqlJs(
-  wasmPath
-    ? { locateFile: (f) => (f.endsWith('.wasm') ? wasmPath : f) }
-    : undefined
+  wasmPath ? { locateFile: (f) => (f.endsWith('.wasm') ? wasmPath : f) } : undefined
 );
+
 let raw;
-if (fs.existsSync(dbPath)) {
-  raw = new SQL.Database(fs.readFileSync(dbPath));
-} else {
+try {
+  if (fs.existsSync(dbPath)) {
+    raw = new SQL.Database(fs.readFileSync(dbPath));
+  } else {
+    raw = new SQL.Database();
+  }
+} catch (e) {
+  console.error('DB open failed, new empty DB', e.message);
   raw = new SQL.Database();
 }
 
@@ -44,7 +54,6 @@ function persist() {
   }
 }
 
-// автосохранение раз в 2 сек после изменений
 let dirty = false;
 let persistTimer = null;
 function markDirty() {
@@ -56,26 +65,27 @@ function markDirty() {
       dirty = false;
       persist();
     }
-  }, 1500);
+  }, 1000);
 }
 
-function bindStmt(stmt, params) {
-  if (!params || params.length === 0) return;
-  // sql.js: bind array is 1-based values as array
-  const bound = {};
-  params.forEach((v, i) => {
-    bound[i + 1] = v === undefined ? null : v;
-  });
-  stmt.bind(bound);
+function normalizeParams(params) {
+  if (!params || params.length === 0) return [];
+  // better-sqlite3 style: run(a,b,c) OR run([a,b,c])
+  if (params.length === 1 && Array.isArray(params[0])) return params[0];
+  return params;
 }
 
 function stmtAll(sql, params) {
+  const p = normalizeParams(params);
   const stmt = raw.prepare(sql);
-  bindStmt(stmt, params);
-  const rows = [];
-  while (stmt.step()) rows.push(stmt.getAsObject());
-  stmt.free();
-  return rows;
+  try {
+    if (p.length) stmt.bind(p);
+    const rows = [];
+    while (stmt.step()) rows.push(stmt.getAsObject());
+    return rows;
+  } finally {
+    stmt.free();
+  }
 }
 
 function stmtGet(sql, params) {
@@ -84,10 +94,14 @@ function stmtGet(sql, params) {
 }
 
 function stmtRun(sql, params) {
+  const p = normalizeParams(params);
   const stmt = raw.prepare(sql);
-  bindStmt(stmt, params);
-  stmt.step();
-  stmt.free();
+  try {
+    if (p.length) stmt.bind(p);
+    stmt.step();
+  } finally {
+    stmt.free();
+  }
   const changes = raw.getRowsModified();
   let lastInsertRowid = 0;
   try {
@@ -116,9 +130,7 @@ const db = {
     raw.exec(sql);
     markDirty();
   },
-  pragma() {
-    /* no-op for sql.js */
-  },
+  pragma() {},
   transaction(fn) {
     return (...args) => {
       raw.run('BEGIN');
@@ -145,7 +157,7 @@ db.exec(`
     currency TEXT DEFAULT 'RUB',
     remind_enabled INTEGER DEFAULT 0,
     remind_hour INTEGER DEFAULT 21,
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT
   );
 
   CREATE TABLE IF NOT EXISTS accounts (
@@ -155,7 +167,7 @@ db.exec(`
     type TEXT NOT NULL DEFAULT 'card',
     balance REAL NOT NULL DEFAULT 0,
     icon TEXT DEFAULT '💳',
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT
   );
 
   CREATE TABLE IF NOT EXISTS categories (
@@ -184,7 +196,7 @@ db.exec(`
     type TEXT NOT NULL,
     note TEXT DEFAULT '',
     date TEXT NOT NULL,
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT
   );
 
   CREATE TABLE IF NOT EXISTS piggy_banks (
@@ -194,7 +206,7 @@ db.exec(`
     goal REAL NOT NULL DEFAULT 0,
     balance REAL NOT NULL DEFAULT 0,
     icon TEXT DEFAULT '🏦',
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT
   );
 `);
 
@@ -224,11 +236,11 @@ export function getOrCreateUser(telegramId, name = '') {
     return user;
   }
 
-  // sql.js: INTEGER PRIMARY KEY auto
   db.prepare(
     `INSERT INTO users (telegram_id, name, remind_enabled, remind_hour) VALUES (?,?,0,21)`
   ).run(tid, name || '');
   user = db.prepare('SELECT * FROM users WHERE telegram_id=?').get(tid);
+  if (!user) throw new Error('Не удалось создать пользователя');
 
   db.prepare(
     `INSERT INTO accounts (user_id, name, type, balance, icon) VALUES (?,?,?,?,?)`
@@ -247,7 +259,6 @@ export function getOrCreateUser(telegramId, name = '') {
   return user;
 }
 
-// сохранение при выходе
 process.on('SIGINT', () => {
   persist();
   process.exit(0);
