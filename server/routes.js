@@ -388,15 +388,23 @@ router.post('/parse-receipt', async (req, res) => {
     } else if (text && String(text).trim().length > 10) {
       g = await parseReceiptText(String(text), names);
     } else if (pdfBase64) {
-      const buf = Buffer.from(String(pdfBase64).replace(/^data:application\/pdf;base64,/, ''), 'base64');
+      const b64 = String(pdfBase64).replace(/^data:[^;]+;base64,/, '');
+      const buf = Buffer.from(b64, 'base64');
       const asLatin = buf.toString('latin1');
       const texts = [];
-      const re = /\(([^)]{2,80})\)\s*Tj/g;
       let m;
-      while ((m = re.exec(asLatin)) && texts.length < 100) texts.push(m[1]);
-      const extracted = texts.join(' ').replace(/\s+/g, ' ').trim();
-      if (extracted.length > 15) g = await parseReceiptText(extracted, names);
-      if (!g) return res.status(400).json({ error: 'PDF не прочитан. Сделайте фото чека.' });
+      const re1 = /\(([^\\()]{2,120})\)\s*Tj/g;
+      while ((m = re1.exec(asLatin)) && texts.length < 150) texts.push(m[1]);
+      const re3 = /[А-Яа-яA-Z0-9][А-Яа-яA-Za-z0-9\s.,₽\-]{4,60}/g;
+      while ((m = re3.exec(asLatin)) && texts.length < 250) texts.push(m[0]);
+      const extracted = [...new Set(texts)].join(' ').replace(/\s+/g, ' ').trim();
+      console.log('PDF extract len', extracted.length);
+      if (extracted.length > 10) g = await parseReceiptText(extracted, names);
+      if (!g) {
+        return res.status(400).json({
+          error: 'Этот PDF — скан/картинка без текста. Пришлите фото чека (JPG/PNG).',
+        });
+      }
     } else {
       return res.status(400).json({ error: 'Нужны image (data URL), text или pdfBase64' });
     }
