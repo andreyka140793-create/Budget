@@ -12,52 +12,61 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json({ limit: '8mb' }));
+app.use(express.json({ limit: '12mb' }));
+
+// Telegram webhook (до JSON-парсера для raw? grammY express ok with json)
+// Подключим после старта бота
 
 // API
 app.use('/api', routes);
 
 // Health
-app.get('/health', (_, res) => res.json({ ok: true, time: new Date().toISOString() }));
+app.get('/health', (_, res) =>
+  res.json({
+    ok: true,
+    time: new Date().toISOString(),
+    bot: Boolean(process.env.BOT_TOKEN),
+    webapp: process.env.WEBAPP_URL || null,
+  })
+);
 
-// Mini App: сначала dist (если собран), иначе исходники webapp (без Vite)
+// Mini App static
 const webDist = path.join(__dirname, '..', 'webapp', 'dist');
 const webSrc = path.join(__dirname, '..', 'webapp');
 const useDist = fs.existsSync(path.join(webDist, 'index.html'));
 const webRoot = useDist ? webDist : webSrc;
-
 console.log(`Static Mini App from: ${webRoot} (${useDist ? 'dist' : 'source'})`);
 
 app.use(express.static(webRoot));
-// на случай path /src при раздаче из webapp/
 if (!useDist) {
   app.use('/src', express.static(path.join(webSrc, 'src')));
 }
 
 app.get('*', (req, res, next) => {
-  if (req.path.startsWith('/api')) return next();
+  if (req.path.startsWith('/api') || req.path.startsWith('/telegram-webhook')) return next();
   const indexPath = path.join(webRoot, 'index.html');
-  if (fs.existsSync(indexPath)) {
-    res.sendFile(indexPath);
+  if (fs.existsSync(indexPath)) res.sendFile(indexPath);
+  else res.status(404).send('Mini App files missing');
+});
+
+app.listen(PORT, '0.0.0.0', async () => {
+  console.log(`API http://0.0.0.0:${PORT}`);
+  startDailyBackupScheduler();
+
+  if (process.env.BOT_TOKEN && process.env.RUN_BOT !== '0') {
+    try {
+      const botMod = await import('../bot/index.js');
+      const mode = process.env.BOT_MODE || 'webhook';
+      await botMod.startBot(mode);
+      const wh = botMod.getWebhookMiddleware();
+      if (wh) {
+        app.post('/telegram-webhook', wh);
+        console.log('Webhook route /telegram-webhook ready');
+      }
+    } catch (e) {
+      console.error('Bot failed:', e);
+    }
   } else {
-    res.status(404).send('Mini App files missing');
+    console.warn('Bot skipped (BOT_TOKEN / RUN_BOT)');
   }
 });
-
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Дзен-бюджет API: http://localhost:${PORT}`);
-  console.log(`Mini App:       http://localhost:${PORT}/`);
-  startDailyBackupScheduler();
-});
-
-// Бот в том же процессе
-if (process.env.BOT_TOKEN && process.env.RUN_BOT !== '0') {
-  import('../bot/index.js')
-    .then((m) => {
-      console.log('Starting Telegram bot...');
-      return m.startBot();
-    })
-    .catch((e) => console.error('Bot not started:', e));
-} else {
-  console.warn('Bot skipped: set BOT_TOKEN and RUN_BOT=1');
-}

@@ -5,6 +5,7 @@ import { createBackup, listBackups } from './backup.js';
 import { suggestCategory } from './categorize.js';
 import { parseBankSms } from './smsParse.js';
 import { isGrokEnabled, parseReceiptImage, parseReceiptText, parseTransactionWithGrok } from './grok.js';
+import { pdfToImageDataUrls, extractPdfText } from './pdfImages.js';
 
 const router = Router();
 
@@ -390,19 +391,25 @@ router.post('/parse-receipt', async (req, res) => {
     } else if (pdfBase64) {
       const b64 = String(pdfBase64).replace(/^data:[^;]+;base64,/, '');
       const buf = Buffer.from(b64, 'base64');
-      const asLatin = buf.toString('latin1');
-      const texts = [];
-      let m;
-      const re1 = /\(([^\\()]{2,120})\)\s*Tj/g;
-      while ((m = re1.exec(asLatin)) && texts.length < 150) texts.push(m[1]);
-      const re3 = /[А-Яа-яA-Z0-9][А-Яа-яA-Za-z0-9\s.,₽\-]{4,60}/g;
-      while ((m = re3.exec(asLatin)) && texts.length < 250) texts.push(m[0]);
-      const extracted = [...new Set(texts)].join(' ').replace(/\s+/g, ' ').trim();
-      console.log('PDF extract len', extracted.length);
-      if (extracted.length > 10) g = await parseReceiptText(extracted, names);
+      // Сначала картинки из PDF (сканы) → Vision
+      const imgs = pdfToImageDataUrls(buf);
+      for (const img of imgs) {
+        try {
+          g = await parseReceiptImage(img, names);
+          if (g) break;
+        } catch (e) {
+          console.warn('pdf vision', e.message);
+        }
+      }
+      // Затем текстовый слой
+      if (!g) {
+        const extracted = extractPdfText(buf);
+        console.log('PDF text len', extracted.length, 'images', imgs.length);
+        if (extracted.length > 10) g = await parseReceiptText(extracted, names);
+      }
       if (!g) {
         return res.status(400).json({
-          error: 'Этот PDF — скан/картинка без текста. Пришлите фото чека (JPG/PNG).',
+          error: 'Не удалось распознать PDF. Попробуйте другой файл или фото.',
         });
       }
     } else {
