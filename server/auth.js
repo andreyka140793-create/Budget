@@ -1,55 +1,58 @@
-import crypto from 'crypto';
+import crypto from 'node:crypto';
+import { config } from './config.js';
 
 /**
- * Проверка Telegram WebApp initData
- * https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
+ * Строгая проверка Telegram WebApp initData.
+ * Возвращает объект user или null. Никаких «мягких» проходов.
  */
-export function validateInitData(initData, botToken) {
-  if (!initData || initData === 'dev') return null;
-  if (!botToken) {
-    console.warn('BOT_TOKEN пуст — подпись initData не проверяется');
-    return parseUserLoose(initData);
+export function validateInitData(initData, botToken = config.botToken) {
+  if (!initData || !botToken) return null;
+
+  let params;
+  try {
+    params = new URLSearchParams(initData);
+  } catch {
+    return null;
   }
 
-  const params = new URLSearchParams(initData);
   const hash = params.get('hash');
-  if (!hash) return parseUserLoose(initData);
+  if (!hash || !/^[0-9a-f]{64}$/i.test(hash)) return null;
 
   params.delete('hash');
-  const entries = [...params.entries()].sort(([a], [b]) => a.localeCompare(b));
-  const dataCheckString = entries.map(([k, v]) => `${k}=${v}`).join('\n');
+  params.delete('signature');
+
+  const dataCheckString = [...params.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([k, v]) => `${k}=${v}`)
+    .join('\n');
 
   const secretKey = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
   const calculated = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
 
-  if (calculated !== hash) {
-    console.warn('initData hash mismatch — пробуем soft parse');
-    // часто бывает при неверном BOT_TOKEN; всё равно пускаем по user, чтобы UI не умирал
-    return parseUserLoose(initData);
-  }
+  const a = Buffer.from(calculated, 'hex');
+  const b = Buffer.from(hash.toLowerCase(), 'hex');
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
 
-  // до 7 суток
-  const authDate = parseInt(params.get('auth_date') || '0', 10);
-  if (authDate && Date.now() / 1000 - authDate > 86400 * 7) {
-    console.warn('initData auth_date too old');
-  }
+  const authDate = Number.parseInt(params.get('auth_date') || '0', 10);
+  if (!Number.isFinite(authDate) || authDate <= 0) return null;
+  if (Math.abs(Date.now() / 1000 - authDate) > config.initDataMaxAgeSec) return null;
 
-  return parseUserLoose(initData);
-}
-
-function parseUserLoose(initData) {
   try {
-    const params = new URLSearchParams(initData);
     const user = JSON.parse(params.get('user') || 'null');
-    if (user?.id) return user;
-  } catch {}
-  return null;
+    if (!user || typeof user.id !== 'number') return null;
+    return {
+      id: user.id,
+      first_name: String(user.first_name || ''),
+      username: String(user.username || ''),
+    };
+  } catch {
+    return null;
+  }
 }
 
-/** Для локальной разработки без Telegram */
+/** Только для локальной разработки: NODE_ENV!=production и ALLOW_DEV_AUTH=1 */
 export function devUser(initDataHeader) {
-  if (initDataHeader === 'dev') {
-    return { id: 1, first_name: 'Dev', username: 'devuser' };
-  }
-  return null;
+  if (!config.allowDevAuth) return null;
+  if (initDataHeader !== 'dev') return null;
+  return { id: 1, first_name: 'Dev', username: 'devuser' };
 }
