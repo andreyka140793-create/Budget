@@ -34,10 +34,10 @@ function monthSummary(userId) {
   const to = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-31`;
   const income = db.prepare(
     `SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE user_id=? AND type='income' AND date>=? AND date<=?`
-  ).get(userId, from, to).t;
+  ).get(userId, from, to)?.t ?? 0;
   const expense = db.prepare(
     `SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE user_id=? AND type='expense' AND date>=? AND date<=?`
-  ).get(userId, from, to).t;
+  ).get(userId, from, to)?.t ?? 0;
   const byCat = db.prepare(
     `SELECT c.name, SUM(t.amount) as total FROM transactions t
      LEFT JOIN categories c ON c.id=t.category_id
@@ -363,7 +363,7 @@ export function startBot() {
       }
 
       await ctx.reply(
-        'Этот PDF не удалось прочитать как текст.\n\n' +
+        'Этот PDF похож на скан без текста.\n\n' +
           'Сделайте *фото* или скрин чека и отправьте картинкой — так распознаётся надёжнее.',
         { parse_mode: 'Markdown' }
       );
@@ -399,8 +399,31 @@ export function startBot() {
   });
 
   bot.catch((err) => console.error('Bot error:', err));
-  bot.start();
-  console.log('Бот запущен (SMS + чеки + Grok)');
+
+  // Важно: если раньше стоял webhook — long polling молчит, /start «не работает»
+  (async () => {
+    try {
+      await bot.api.deleteWebhook({ drop_pending_updates: false });
+      console.log('Webhook снят, long polling');
+    } catch (e) {
+      console.warn('deleteWebhook:', e.message);
+    }
+    try {
+      await bot.api.setMyCommands([
+        { command: 'start', description: 'Начать / открыть бюджет' },
+        { command: 'app', description: 'Открыть Mini App' },
+        { command: 'today', description: 'Сводка за сегодня' },
+        { command: 'ask', description: 'Спросить про бюджет (Grok)' },
+        { command: 'remind', description: 'Напоминания on|off|21' },
+      ]);
+    } catch (e) {
+      console.warn('setMyCommands:', e.message);
+    }
+    bot.start({
+      onStart: (info) => console.log('Бот polling @' + (info.username || '')),
+    });
+    console.log('Бот запущен (SMS + чеки + Grok)');
+  })();
 
   let lastHourSent = -1;
   setInterval(async () => {
