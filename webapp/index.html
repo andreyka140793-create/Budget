@@ -127,22 +127,20 @@
           <button type="submit" class="btn secondary">+ Добавить счёт</button>
         </form>
 
-        <h2 class="section-title">Импорт CSV</h2>
-        <p class="hint">Формат: date;type;amount;category;account;note<br>
-        или: amount;type;note;date (type = expense/income)</p>
-        <textarea id="import-csv" rows="4" placeholder="2026-03-01;expense;500;Продукты;;Магнит"></textarea>
-        <button class="btn secondary" id="btn-import" style="margin-top:8px">📤 Импортировать</button>
-        <p class="hint" id="import-status"></p>
+        <h2 class="section-title">Распознать SMS / чек</h2>
+        <p class="hint">Вставьте текст SMS банка или загрузите фото/PDF чека</p>
+        <textarea id="sms-text" rows="3" placeholder="Текст SMS банка..."></textarea>
+        <button class="btn secondary" id="btn-parse-sms" style="margin-top:8px">📱 Распознать SMS</button>
 
-        <h2 class="section-title">Вставить SMS</h2>
-        <textarea id="sms-text" rows="3" placeholder="Перепишите текст SMS банка сюда..."></textarea>
-        <button class="btn secondary" id="btn-parse-sms" style="margin-top:8px">Распознать SMS</button>
+        <label class="file-label" style="margin-top:12px;display:block">
+          <input type="file" id="receipt-file" accept="image/*,application/pdf" hidden />
+          <span class="btn secondary" id="btn-pick-receipt" style="display:block;text-align:center;cursor:pointer">🧾 Фото или PDF чека</span>
+        </label>
         <p class="hint" id="sms-status"></p>
 
-        <h2 class="section-title">Экспорт и бэкап</h2>
-        <button class="btn secondary" id="btn-export">📥 Скачать CSV</button>
-        <button class="btn secondary" id="btn-backup" style="margin-top:8px">💾 Бэкап базы сейчас</button>
-        <p class="hint" id="backup-status">Автобэкап каждый день в 03:00 (на сервере). Хранится до 14 копий.</p>
+        <h2 class="section-title">Бэкап</h2>
+        <button class="btn secondary" id="btn-backup">💾 Бэкап базы сейчас</button>
+        <p class="hint" id="backup-status">Автобэкап каждый день в 03:00. До 14 копий.</p>
 
         <h2 class="section-title">Напоминания в Telegram</h2>
         <div class="settings-row">
