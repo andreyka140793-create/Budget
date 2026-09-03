@@ -1,272 +1,307 @@
-/**
- * SQLite через sql.js (без native) — API как у better-sqlite3
- */
-import initSqlJs from 'sql.js';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { createRequire } from 'module';
-import fs from 'fs';
+import fs from 'node:fs';
+import Database from 'better-sqlite3';
+import { config } from './config.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const require = createRequire(import.meta.url);
-const dataDir =
-  process.env.DATA_DIR ||
-  (process.env.AMVERA === '1' ? '/data' : path.join(__dirname, '..', 'data'));
-if (!fs.existsSync(dataDir)) {
+const db = new Database(config.dbPath);
+db.pragma('journal_mode = WAL');
+db.pragma('synchronous = NORMAL');
+db.pragma('busy_timeout = 5000');
+db.pragma('foreign_keys = ON');
+
+export function withTransaction(fn) {
+  return db.transaction(fn)();
+}
+
+/* ---------- деньги ---------- */
+export function toCents(value) {
+  if (value === null || value === undefined || value === '') return NaN;
+  const n = typeof value === 'number' ? value : Number(String(value).replace(',', '.').replace(/\s/g, ''));
+  if (!Number.isFinite(n)) return NaN;
+  return Math.round(n * 100);
+}
+export const fromCents = (cents) => Math.round(Number(cents) || 0) / 100;
+
+/* ---------- схема ---------- */
+function createSchema() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS meta (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      telegram_id TEXT UNIQUE NOT NULL,
+      name TEXT DEFAULT '',
+      currency TEXT NOT NULL DEFAULT 'RUB',
+      timezone TEXT,
+      remind_enabled INTEGER NOT NULL DEFAULT 0,
+      remind_hour INTEGER NOT NULL DEFAULT 21,
+      last_remind_date TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS accounts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'card' CHECK (type IN ('card','cash','other')),
+      initial_balance INTEGER NOT NULL DEFAULT 0,
+      icon TEXT DEFAULT '💳',
+      archived INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS categories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL CHECK (type IN ('income','expense')),
+      icon TEXT DEFAULT '💰',
+      color TEXT DEFAULT '#5c6bc0'
+    );
+
+    CREATE TABLE IF NOT EXISTS budgets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+      amount INTEGER NOT NULL CHECK (amount >= 0),
+      UNIQUE(user_id, category_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS transfers (
+      id TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      from_account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
+      to_account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
+      amount INTEGER NOT NULL CHECK (amount > 0),
+      note TEXT DEFAULT '',
+      date TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+      account_id INTEGER REFERENCES accounts(id) ON DELETE RESTRICT,
+      transfer_id TEXT REFERENCES transfers(id) ON DELETE CASCADE,
+      idempotency_key TEXT,
+      amount INTEGER NOT NULL CHECK (amount > 0),
+      type TEXT NOT NULL CHECK (type IN ('income','expense')),
+      kind TEXT NOT NULL DEFAULT 'normal' CHECK (kind IN ('normal','transfer')),
+      note TEXT NOT NULL DEFAULT '',
+      date TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS piggy_banks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      goal INTEGER NOT NULL DEFAULT 0,
+      icon TEXT DEFAULT '🏦',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS piggy_ops (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      piggy_id INTEGER NOT NULL REFERENCES piggy_banks(id) ON DELETE CASCADE,
+      amount INTEGER NOT NULL,
+      note TEXT DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS bot_drafts (
+      key TEXT PRIMARY KEY,
+      telegram_id TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tx_user_date ON transactions(user_id, date);
+    CREATE INDEX IF NOT EXISTS idx_tx_user_kind_type ON transactions(user_id, kind, type, date);
+    CREATE INDEX IF NOT EXISTS idx_tx_user_cat ON transactions(user_id, category_id, date);
+    CREATE INDEX IF NOT EXISTS idx_tx_account ON transactions(account_id);
+    CREATE INDEX IF NOT EXISTS idx_tx_transfer ON transactions(transfer_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_tx_idem
+      ON transactions(user_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_accounts_user ON accounts(user_id);
+    CREATE INDEX IF NOT EXISTS idx_categories_user ON categories(user_id, type);
+    CREATE INDEX IF NOT EXISTS idx_piggy_user ON piggy_banks(user_id);
+    CREATE INDEX IF NOT EXISTS idx_piggy_ops ON piggy_ops(piggy_id);
+    CREATE INDEX IF NOT EXISTS idx_users_remind ON users(remind_enabled, remind_hour);
+  `);
+  db.prepare("INSERT OR REPLACE INTO meta(key,value) VALUES('schema_version','2')").run();
+}
+
+/* ---------- миграция старой базы (sql.js, суммы в рублях) ---------- */
+function tableExists(name) {
+  return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
+}
+function hasColumn(table, column) {
+  return db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+}
+
+function migrateLegacy() {
+  if (!tableExists('transactions')) return false;
+  if (hasColumn('transactions', 'kind')) return false;
+
+  console.log('Обнаружена база старого формата — миграция…');
   try {
-    fs.mkdirSync(dataDir, { recursive: true });
+    fs.copyFileSync(config.dbPath, `${config.dbPath}.legacy-${Date.now()}`);
   } catch (e) {
-    console.warn('mkdir dataDir failed, fallback to /tmp', e.message);
+    console.warn('Не удалось сделать копию перед миграцией:', e.message);
   }
-}
-const effectiveDataDir = fs.existsSync(dataDir) ? dataDir : '/tmp';
-const dbPath = path.join(effectiveDataDir, 'budget.db');
 
-let wasmPath;
-try {
-  wasmPath = path.join(path.dirname(require.resolve('sql.js')), 'sql-wasm.wasm');
-} catch {
-  wasmPath = null;
-}
-
-const SQL = await initSqlJs(
-  wasmPath ? { locateFile: (f) => (f.endsWith('.wasm') ? wasmPath : f) } : undefined
-);
-
-let raw;
-try {
-  if (fs.existsSync(dbPath)) {
-    raw = new SQL.Database(fs.readFileSync(dbPath));
-  } else {
-    raw = new SQL.Database();
-  }
-} catch (e) {
-  console.error('DB open failed, new empty DB', e.message);
-  raw = new SQL.Database();
-}
-
-function persist() {
-  try {
-    const data = raw.export();
-    fs.writeFileSync(dbPath, Buffer.from(data));
-  } catch (e) {
-    console.warn('DB persist failed:', e.message);
-  }
-}
-
-let dirty = false;
-let persistTimer = null;
-function markDirty() {
-  dirty = true;
-  if (persistTimer) return;
-  persistTimer = setTimeout(() => {
-    persistTimer = null;
-    if (dirty) {
-      dirty = false;
-      persist();
+  const legacyTables = ['users', 'accounts', 'categories', 'budgets', 'transactions', 'piggy_banks'];
+  db.pragma('foreign_keys = OFF');
+  withTransaction(() => {
+    for (const t of legacyTables) {
+      if (tableExists(t)) db.exec(`ALTER TABLE ${t} RENAME TO ${t}_legacy`);
     }
-  }, 1000);
+    createSchema();
+
+    db.exec(`
+      INSERT INTO users(id,telegram_id,name,currency,remind_enabled,remind_hour,created_at)
+      SELECT id, CAST(telegram_id AS TEXT), COALESCE(name,''), COALESCE(currency,'RUB'),
+             COALESCE(remind_enabled,0), COALESCE(remind_hour,21), COALESCE(created_at, datetime('now'))
+      FROM users_legacy;
+
+      INSERT INTO accounts(id,user_id,name,type,initial_balance,icon)
+      SELECT id, user_id, COALESCE(name,'Счёт'),
+             CASE WHEN type IN ('card','cash','other') THEN type ELSE 'card' END,
+             CAST(ROUND(COALESCE(balance,0)*100) AS INTEGER), COALESCE(icon,'💳')
+      FROM accounts_legacy;
+
+      INSERT INTO categories(id,user_id,name,type,icon,color)
+      SELECT id, user_id, COALESCE(name,'Прочее'),
+             CASE WHEN type='income' THEN 'income' ELSE 'expense' END,
+             COALESCE(icon,'💰'), COALESCE(color,'#5c6bc0')
+      FROM categories_legacy;
+
+      INSERT INTO transactions(id,user_id,category_id,account_id,amount,type,kind,note,date,created_at)
+      SELECT id, user_id, category_id, account_id,
+             CAST(ROUND(amount*100) AS INTEGER),
+             CASE WHEN type='income' THEN 'income' ELSE 'expense' END,
+             CASE WHEN category_id IS NULL AND COALESCE(note,'') LIKE 'Перевод%' THEN 'transfer' ELSE 'normal' END,
+             COALESCE(note,''), date, COALESCE(created_at, datetime('now'))
+      FROM transactions_legacy
+      WHERE amount IS NOT NULL AND amount > 0;
+    `);
+
+    if (tableExists('budgets_legacy')) {
+      db.exec(`
+        INSERT INTO budgets(user_id,category_id,amount)
+        SELECT user_id, category_id, CAST(ROUND(COALESCE(amount,0)*100) AS INTEGER)
+        FROM budgets_legacy
+        WHERE category_id IN (SELECT id FROM categories);
+      `);
+    }
+    if (tableExists('piggy_banks_legacy')) {
+      db.exec(`
+        INSERT INTO piggy_banks(id,user_id,name,goal,icon)
+        SELECT id, user_id, COALESCE(name,'Копилка'),
+               CAST(ROUND(COALESCE(goal,0)*100) AS INTEGER), COALESCE(icon,'🏦')
+        FROM piggy_banks_legacy;
+
+        INSERT INTO piggy_ops(piggy_id, amount, note)
+        SELECT id, CAST(ROUND(COALESCE(balance,0)*100) AS INTEGER), 'Перенос при миграции'
+        FROM piggy_banks_legacy WHERE COALESCE(balance,0) <> 0;
+      `);
+    }
+
+    // чистим «висячие» ссылки
+    db.exec(`
+      UPDATE transactions SET category_id=NULL
+        WHERE category_id IS NOT NULL AND category_id NOT IN (SELECT id FROM categories);
+      UPDATE transactions SET account_id=NULL
+        WHERE account_id IS NOT NULL AND account_id NOT IN (SELECT id FROM accounts);
+      DELETE FROM transactions WHERE user_id NOT IN (SELECT id FROM users);
+      DELETE FROM accounts WHERE user_id NOT IN (SELECT id FROM users);
+      DELETE FROM categories WHERE user_id NOT IN (SELECT id FROM users);
+    `);
+
+    // сохраняем ранее показанные балансы: initial = old_balance - net(tx)
+    db.exec(`
+      UPDATE accounts SET initial_balance = initial_balance - COALESCE((
+        SELECT SUM(CASE WHEN t.type='income' THEN t.amount ELSE -t.amount END)
+        FROM transactions t WHERE t.account_id = accounts.id
+      ), 0);
+    `);
+
+    for (const t of legacyTables) {
+      if (tableExists(`${t}_legacy`)) db.exec(`DROP TABLE ${t}_legacy`);
+    }
+  });
+  db.pragma('foreign_keys = ON');
+
+  const bad = db.pragma('foreign_key_check');
+  if (bad.length) console.warn('foreign_key_check после миграции:', bad.slice(0, 5));
+  console.log('Миграция завершена.');
+  return true;
 }
 
-function normalizeParams(params) {
-  if (!params || params.length === 0) return [];
-  // better-sqlite3 style: run(a,b,c) OR run([a,b,c])
-  if (params.length === 1 && Array.isArray(params[0])) return params[0];
-  return params;
-}
+migrateLegacy();
+createSchema();
+db.exec('ANALYZE');
 
-function stmtAll(sql, params) {
-  const p = normalizeParams(params);
-  const stmt = raw.prepare(sql);
-  try {
-    if (p.length) stmt.bind(p);
-    const rows = [];
-    while (stmt.step()) rows.push(stmt.getAsObject());
-    return rows;
-  } finally {
-    stmt.free();
-  }
-}
-
-function stmtGet(sql, params) {
-  const rows = stmtAll(sql, params);
-  return rows[0];
-}
-
-function stmtRun(sql, params) {
-  const p = normalizeParams(params);
-  const stmt = raw.prepare(sql);
-  try {
-    if (p.length) stmt.bind(p);
-    stmt.step();
-  } finally {
-    stmt.free();
-  }
-  const changes = raw.getRowsModified();
-  let lastInsertRowid = 0;
-  try {
-    const r = raw.exec('SELECT last_insert_rowid() as id');
-    if (r[0]?.values?.[0]) lastInsertRowid = r[0].values[0][0];
-  } catch {}
-  markDirty();
-  return { changes, lastInsertRowid };
-}
-
-const db = {
-  prepare(sql) {
-    return {
-      all(...params) {
-        return stmtAll(sql, params);
-      },
-      get(...params) {
-        return stmtGet(sql, params);
-      },
-      run(...params) {
-        return stmtRun(sql, params);
-      },
-    };
-  },
-  exec(sql) {
-    raw.exec(sql);
-    markDirty();
-  },
-  pragma() {},
-  transaction(fn) {
-    return (...args) => {
-      raw.run('BEGIN');
-      try {
-        const result = fn(...args);
-        raw.run('COMMIT');
-        markDirty();
-        return result;
-      } catch (e) {
-        try {
-          raw.run('ROLLBACK');
-        } catch {}
-        throw e;
-      }
-    };
-  },
-};
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY,
-    telegram_id TEXT UNIQUE NOT NULL,
-    name TEXT,
-    currency TEXT DEFAULT 'RUB',
-    remind_enabled INTEGER DEFAULT 0,
-    remind_hour INTEGER DEFAULT 21,
-    created_at TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS accounts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    name TEXT NOT NULL,
-    type TEXT NOT NULL DEFAULT 'card',
-    balance REAL NOT NULL DEFAULT 0,
-    icon TEXT DEFAULT '💳',
-    created_at TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS categories (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    name TEXT NOT NULL,
-    type TEXT NOT NULL,
-    icon TEXT DEFAULT '💰',
-    color TEXT DEFAULT '#5c6bc0'
-  );
-
-  CREATE TABLE IF NOT EXISTS budgets (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    category_id INTEGER NOT NULL,
-    amount REAL NOT NULL,
-    UNIQUE(user_id, category_id)
-  );
-
-  CREATE TABLE IF NOT EXISTS transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    category_id INTEGER,
-    account_id INTEGER,
-    amount REAL NOT NULL,
-    type TEXT NOT NULL,
-    note TEXT DEFAULT '',
-    date TEXT NOT NULL,
-    created_at TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS piggy_banks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    name TEXT NOT NULL,
-    goal REAL NOT NULL DEFAULT 0,
-    balance REAL NOT NULL DEFAULT 0,
-    icon TEXT DEFAULT '🏦',
-    created_at TEXT
-  );
-`);
-
+/* ---------- пользователи ---------- */
 const DEFAULT_CATEGORIES = [
-  { name: 'Продукты', type: 'expense', icon: '🛒', color: '#66bb6a' },
-  { name: 'Кафе', type: 'expense', icon: '☕', color: '#ffa726' },
-  { name: 'Транспорт', type: 'expense', icon: '🚗', color: '#42a5f5' },
-  { name: 'Жильё', type: 'expense', icon: '🏠', color: '#ab47bc' },
-  { name: 'Связь', type: 'expense', icon: '📱', color: '#26c6da' },
-  { name: 'Здоровье', type: 'expense', icon: '💊', color: '#ef5350' },
-  { name: 'Одежда', type: 'expense', icon: '👕', color: '#ec407a' },
-  { name: 'Развлечения', type: 'expense', icon: '🎬', color: '#7e57c2' },
-  { name: 'Прочее', type: 'expense', icon: '📦', color: '#78909c' },
-  { name: 'Зарплата', type: 'income', icon: '💰', color: '#66bb6a' },
-  { name: 'Подработка', type: 'income', icon: '🛠️', color: '#9ccc65' },
-  { name: 'Подарок', type: 'income', icon: '🎁', color: '#ffca28' },
+  ['Продукты', 'expense', '🛒', '#66bb6a'],
+  ['Кафе', 'expense', '☕', '#ffa726'],
+  ['Транспорт', 'expense', '🚗', '#42a5f5'],
+  ['Жильё', 'expense', '🏠', '#ab47bc'],
+  ['Связь', 'expense', '📱', '#26c6da'],
+  ['Здоровье', 'expense', '💊', '#ef5350'],
+  ['Одежда', 'expense', '👕', '#ec407a'],
+  ['Развлечения', 'expense', '🎬', '#7e57c2'],
+  ['Прочее', 'expense', '📦', '#78909c'],
+  ['Зарплата', 'income', '💰', '#66bb6a'],
+  ['Подработка', 'income', '🛠️', '#9ccc65'],
+  ['Подарок', 'income', '🎁', '#ffca28'],
 ];
 
 export function getOrCreateUser(telegramId, name = '') {
   const tid = String(telegramId);
-  let user = db.prepare('SELECT * FROM users WHERE telegram_id=?').get(tid);
-  if (user) {
-    if (name && name !== user.name) {
-      db.prepare('UPDATE users SET name=? WHERE id=?').run(name, user.id);
-      user.name = name;
+  const safeName = String(name || '').slice(0, 64);
+  const existing = db.prepare('SELECT * FROM users WHERE telegram_id=?').get(tid);
+  if (existing) {
+    if (safeName && safeName !== existing.name) {
+      db.prepare('UPDATE users SET name=? WHERE id=?').run(safeName, existing.id);
+      existing.name = safeName;
     }
-    return user;
+    return existing;
   }
 
-  db.prepare(
-    `INSERT INTO users (telegram_id, name, remind_enabled, remind_hour) VALUES (?,?,0,21)`
-  ).run(tid, name || '');
-  user = db.prepare('SELECT * FROM users WHERE telegram_id=?').get(tid);
-  if (!user) throw new Error('Не удалось создать пользователя');
+  return withTransaction(() => {
+    const info = db
+      .prepare('INSERT INTO users(telegram_id,name,timezone) VALUES(?,?,?)')
+      .run(tid, safeName, config.timezoneDefault);
+    const userId = Number(info.lastInsertRowid);
 
-  db.prepare(
-    `INSERT INTO accounts (user_id, name, type, balance, icon) VALUES (?,?,?,?,?)`
-  ).run(user.id, 'Карта', 'card', 0, '💳');
-  db.prepare(
-    `INSERT INTO accounts (user_id, name, type, balance, icon) VALUES (?,?,?,?,?)`
-  ).run(user.id, 'Наличные', 'cash', 0, '💵');
+    const insAcc = db.prepare(
+      'INSERT INTO accounts(user_id,name,type,initial_balance,icon) VALUES(?,?,?,0,?)'
+    );
+    insAcc.run(userId, 'Карта', 'card', '💳');
+    insAcc.run(userId, 'Наличные', 'cash', '💵');
 
-  const ins = db.prepare(
-    `INSERT INTO categories (user_id, name, type, icon, color) VALUES (?,?,?,?,?)`
-  );
-  for (const c of DEFAULT_CATEGORIES) {
-    ins.run(user.id, c.name, c.type, c.icon, c.color);
-  }
-  persist();
-  return user;
+    const insCat = db.prepare(
+      'INSERT INTO categories(user_id,name,type,icon,color) VALUES(?,?,?,?,?)'
+    );
+    for (const [n, t, i, c] of DEFAULT_CATEGORIES) insCat.run(userId, n, t, i, c);
+
+    return db.prepare('SELECT * FROM users WHERE id=?').get(userId);
+  });
 }
 
-process.on('SIGINT', () => {
-  persist();
-  process.exit(0);
-});
-process.on('SIGTERM', () => {
-  persist();
-  process.exit(0);
-});
+export function closeDb() {
+  try {
+    db.pragma('wal_checkpoint(TRUNCATE)');
+    db.close();
+  } catch (e) {
+    console.warn('closeDb', e.message);
+  }
+}
 
-console.log('DB ready at', dbPath);
 export default db;
