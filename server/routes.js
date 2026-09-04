@@ -15,10 +15,17 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 /* ---------- аутентификация ---------- */
 router.use((req, res, next) => {
   try {
-    const initData = String(req.headers['x-telegram-init-data'] || '');
+    const initData = String(
+      req.headers['x-telegram-init-data'] ||
+      req.headers['x-telegram-initdata'] ||
+      ''
+    ).trim();
     const tgUser = validateInitData(initData) || devUser(initData);
     if (!tgUser?.id) {
-      throw unauthorized('Откройте приложение через кнопку в боте — данные Telegram не подтверждены.');
+      const hint = !initData || initData === 'dev'
+        ? 'Нет initData. Откройте Mini App кнопкой бота (/start → Открыть бюджет), не по прямой ссылке.'
+        : 'Подпись Telegram не совпала. Проверьте BOT_TOKEN на Amvera (тот же, что у @BotFather, без пробелов).';
+      throw unauthorized(hint);
     }
     req.tgUser = tgUser;
     req.user = getOrCreateUser(tgUser.id, tgUser.first_name || tgUser.username || '');

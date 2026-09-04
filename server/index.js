@@ -39,11 +39,14 @@ app.use(
   })
 );
 
-if (config.allowedOrigin) {
-  app.use(cors({ origin: config.allowedOrigin, methods: ['GET', 'POST', 'DELETE'], maxAge: 600 }));
-} else if (!config.isProd) {
-  app.use(cors());
-}
+// Mini App открывается с того же origin — CORS почти не нужен.
+// Разрешаем кастомный заголовок на случай отличия origin.
+app.use(cors({
+  origin: true,
+  methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'X-Telegram-Init-Data', 'X-Telegram-InitData'],
+  maxAge: 600,
+}));
 
 app.use(express.json({ limit: `${config.maxBodyMb}mb` }));
 
