@@ -35,10 +35,77 @@ function mainKeyboard() {
   return new Keyboard()
     .text('📊 Сегодня').text('📅 Месяц').row()
     .text('➖ Расход').text('➕ Доход').row()
-    .text('💳 Счета').text('🏛 Копилки').row()
-    .text('🎯 Бюджет').text('⚙️ Ещё')
+    .text('📈 Анализ').text('💳 Счета').row()
+    .text('🏛 Копилки').text('🎯 Бюджет').row()
+    .text('⚙️ Ещё')
     .resized()
     .persistent();
+}
+
+function periodBounds(user, periodKey) {
+  const today = svc.todayIn(svc.tzOf(user));
+  const [y, m, d] = today.split('-').map(Number);
+  if (periodKey === 'today') return { from: today, to: today, label: 'сегодня' };
+  if (periodKey === 'week') {
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    const day = (dt.getUTCDay() + 6) % 7;
+    dt.setUTCDate(dt.getUTCDate() - day);
+    return { from: dt.toISOString().slice(0, 10), to: today, label: 'неделя' };
+  }
+  if (periodKey === 'month') {
+    const b = svc.monthBounds(today);
+    return { from: b.from, to: today, label: 'месяц' };
+  }
+  if (periodKey === 'quarter') {
+    const qStartMonth = Math.floor((m - 1) / 3) * 3 + 1;
+    return { from: `${y}-${String(qStartMonth).padStart(2, '0')}-01`, to: today, label: 'квартал' };
+  }
+  if (periodKey === 'year') return { from: `${y}-01-01`, to: today, label: 'год' };
+  const b = svc.monthBounds(today);
+  return { from: b.from, to: today, label: 'месяц' };
+}
+
+/** Разбор даты: 01.09.2026 / 1.9.26 / 2026-09-01 */
+function parseUserDate(text) {
+  const s = String(text || '').trim();
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (m) {
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
+    if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+    return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  }
+  m = s.match(/^(\d{1,2})[./](\d{1,2})[./](\d{2,4})$/);
+  if (m) {
+    let y = Number(m[3]);
+    if (y < 100) y += 2000;
+    const mo = Number(m[2]);
+    const d = Number(m[1]);
+    if (mo < 1 || mo > 12 || d < 1 || d > 31 || y < 2000 || y > 2100) return null;
+    return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  }
+  return null;
+}
+
+function formatAnalysis(result, label) {
+  const typeLabel =
+    result.type === 'expense' ? 'расходы' : result.type === 'income' ? 'доходы' : 'все операции';
+  const lines = (result.rows || []).slice(0, 20).map((r) => {
+    const sign = r.type === 'income' ? '+' : '−';
+    return `${r.icon || '•'} <b>${esc(r.name)}</b>: ${sign}${fmt(r.total)} (${r.count})`;
+  });
+  return (
+    `📈 <b>Анализ</b> (${esc(label)})\n` +
+    `${esc(result.from)} — ${esc(result.to)}\n` +
+    `Фильтр: <b>${typeLabel}</b>` +
+    (result.categoryId ? ' · одна категория' : '') +
+    `\n\n` +
+    `➕ Доходы: ${fmt(result.income)}\n` +
+    `➖ Расходы: ${fmt(result.expense)}\n` +
+    `Операций: ${result.ops}\n` +
+    (lines.length ? `\n<b>По категориям:</b>\n` + lines.join('\n') : '\nНет данных за период')
+  );
 }
 
 function cancelKeyboard() {
@@ -264,7 +331,7 @@ export function createBot() {
     await ctx.reply('Использование: /remind on или /remind off');
   });
 
-  const MENU = new Set(['📊 Сегодня', '📅 Месяц', '➖ Расход', '➕ Доход', '💳 Счета', '🏛 Копилки', '🎯 Бюджет', '⚙️ Ещё', '❌ Отмена']);
+  const MENU = new Set(['📊 Сегодня', '📅 Месяц', '➖ Расход', '➕ Доход', '📈 Анализ', '💳 Счета', '🏛 Копилки', '🎯 Бюджет', '⚙️ Ещё', '❌ Отмена']);
 
   bot.hears('❌ Отмена', async (ctx) => {
     clearSession(ctx.from.id);
@@ -273,6 +340,25 @@ export function createBot() {
   bot.hears('📊 Сегодня', (ctx) => ctx.reply(todayText(ctx.dbUser), { parse_mode: 'HTML' }));
   bot.hears('📅 Месяц', (ctx) => ctx.reply(monthText(ctx.dbUser), { parse_mode: 'HTML' }));
   bot.hears('💳 Счета', (ctx) => ctx.reply(accountsText(ctx.dbUser), { parse_mode: 'HTML' }));
+
+  bot.hears('📈 Анализ', async (ctx) => {
+    clearSession(ctx.from.id);
+    const kb = new InlineKeyboard()
+      .text('Сегодня', 'an:p:today')
+      .text('Неделя', 'an:p:week')
+      .row()
+      .text('Месяц', 'an:p:month')
+      .text('Квартал', 'an:p:quarter')
+      .row()
+      .text('Год', 'an:p:year')
+      .row()
+      .text('📅 Свой период', 'an:p:custom');
+    await ctx.reply(
+      '📈 Анализ — выберите период:\n' +
+        'Или «📅 Свой период» — укажите даты с и по (например с 01.09.2026 по 17.09.2026).',
+      { reply_markup: kb },
+    );
+  });
 
   bot.hears('➖ Расход', async (ctx) => {
     const s = getSession(ctx.from.id);
@@ -363,12 +449,13 @@ export function createBot() {
     const draft = await readDraftAsync(key, ctx.from.id);
     await ctx.answerCallbackQuery();
     if (!draft) return ctx.reply('Черновик устарел');
-    const cats = svc.categoryList(ctx.dbUser.id, draft.type || 'expense').slice(0, 24);
+    const cats = svc.categoryList(ctx.dbUser.id, draft.type || 'expense').slice(0, 22);
     const kb = new InlineKeyboard();
     cats.forEach((c, i) => {
       kb.text(c.name, `d:setcat:${key}:${c.id}`);
       if (i % 2 === 1) kb.row();
     });
+    kb.row().text('✏️ Своя категория', `d:customcat:${key}`);
     await ctx.reply('Выберите категорию:', { reply_markup: kb });
   });
 
@@ -495,6 +582,7 @@ export function createBot() {
         kb.text(c.name, `wiz:cat:${c.id}`);
         if (i % 2 === 1) kb.row();
       });
+      kb.row().text('✏️ Своя категория', 'wiz:customcat');
       await ctx.reply('Категория:', { reply_markup: kb });
       return;
     }
@@ -512,6 +600,94 @@ export function createBot() {
       };
       clearSession(ctx.from.id);
       await offerDraft(ctx, ctx.dbUser, d);
+      return;
+    }
+
+    if (s.step === 'an_from') {
+      const from = parseUserDate(text);
+      if (!from) {
+        return ctx.reply('Не понял дату. Пример: <code>01.09.2026</code>', { parse_mode: 'HTML' });
+      }
+      s.data.from = from;
+      s.step = 'an_to';
+      await ctx.reply(
+        `С <b>${from}</b>. Теперь дата <b>по</b> какое число?\nПример: <code>17.09.2026</code>`,
+        { parse_mode: 'HTML', reply_markup: cancelKeyboard() },
+      );
+      return;
+    }
+
+    if (s.step === 'an_to') {
+      const to = parseUserDate(text);
+      if (!to) {
+        return ctx.reply('Не понял дату. Пример: <code>17.09.2026</code>', { parse_mode: 'HTML' });
+      }
+      let from = s.data.from;
+      if (to < from) {
+        // поменяем местами
+        const tmp = from;
+        from = to;
+        s.data.from = from;
+        s.data.to = tmp;
+      } else {
+        s.data.to = to;
+      }
+      s.step = 'analysis';
+      s.data.period = 'custom';
+      const kb = new InlineKeyboard()
+        .text('➖ Расходы', 'an:t:expense')
+        .text('➕ Доходы', 'an:t:income')
+        .row()
+        .text('📊 Все', 'an:t:all');
+      await ctx.reply(
+        `Период: <b>${s.data.from}</b> — <b>${s.data.to}</b>\nТип операций:`,
+        { parse_mode: 'HTML', reply_markup: kb },
+      );
+      return;
+    }
+
+        if (s.step === 'custom_cat_wiz') {
+      const name = text.slice(0, 40).trim();
+      if (name.length < 1) return ctx.reply('Введите название');
+      try {
+        const cat = svc.createCategory(ctx.dbUser.id, { name, type: s.data.type || 'expense' });
+        s.data.category_id = cat.id;
+        s.data.category_name = cat.name;
+        s.step = 'tx_note';
+        await ctx.reply('Категория «' + esc(cat.name) + '» создана. Комментарий? Или «-»', {
+          reply_markup: cancelKeyboard(),
+        });
+      } catch (e) {
+        await ctx.reply(e.message || 'Не удалось создать категорию');
+      }
+      return;
+    }
+
+    if (s.step === 'custom_cat_draft') {
+      const name = text.slice(0, 40).trim();
+      const key = s.data.draftKey;
+      if (!key) {
+        clearSession(ctx.from.id);
+        return ctx.reply('Сессия устарела');
+      }
+      const draft = await readDraftAsync(key, ctx.from.id);
+      if (!draft) {
+        clearSession(ctx.from.id);
+        return ctx.reply('Черновик устарел');
+      }
+      try {
+        const cat = svc.createCategory(ctx.dbUser.id, { name, type: draft.type || 'expense' });
+        draft.category_id = cat.id;
+        draft.category_name = cat.name;
+        saveDraftBoth(key, ctx.from.id, draft);
+        clearSession(ctx.from.id);
+        await ctx.reply(formatDraft(draft), {
+          parse_mode: 'HTML',
+          reply_markup: draftKeyboard(key),
+        });
+      } catch (e) {
+        await ctx.reply(e.message || 'Не удалось создать категорию');
+      }
       return;
     }
 
@@ -540,6 +716,94 @@ export function createBot() {
     } catch (e) {
       await ctx.reply(`Ошибка: ${e.message}`);
     }
+  });
+
+
+  bot.callbackQuery(/^d:customcat:(.+)$/, async (ctx) => {
+    const key = ctx.match[1];
+    await ctx.answerCallbackQuery();
+    const s = getSession(ctx.from.id);
+    s.step = 'custom_cat_draft';
+    s.data = { draftKey: key };
+    await ctx.reply('Введите название своей категории:', { reply_markup: cancelKeyboard() });
+  });
+
+  bot.callbackQuery('wiz:customcat', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const s = getSession(ctx.from.id);
+    if (s.step !== 'tx_category') return ctx.reply('Начните снова: ➖ Расход');
+    s.step = 'custom_cat_wiz';
+    await ctx.reply('Введите название своей категории:', { reply_markup: cancelKeyboard() });
+  });
+
+  bot.callbackQuery(/^an:p:(.+)$/, async (ctx) => {
+    const period = ctx.match[1];
+    const s = getSession(ctx.from.id);
+    await ctx.answerCallbackQuery();
+    if (period === 'custom') {
+      s.step = 'an_from';
+      s.data = { period: 'custom' };
+      await ctx.reply(
+        'Дата <b>с</b> какого числа?\nПример: <code>01.09.2026</code> или <code>2026-09-01</code>',
+        { parse_mode: 'HTML', reply_markup: cancelKeyboard() },
+      );
+      return;
+    }
+    s.step = 'analysis';
+    s.data = { period };
+    const kb = new InlineKeyboard()
+      .text('➖ Расходы', 'an:t:expense')
+      .text('➕ Доходы', 'an:t:income')
+      .row()
+      .text('📊 Все', 'an:t:all');
+    await ctx.reply('Тип операций:', { reply_markup: kb });
+  });
+
+  bot.callbackQuery(/^an:t:(.+)$/, async (ctx) => {
+    const typeRaw = ctx.match[1];
+    const s = getSession(ctx.from.id);
+    await ctx.answerCallbackQuery();
+    if (s.step !== 'analysis') return ctx.reply('Нажмите «📈 Анализ» снова');
+    s.data.type = typeRaw === 'all' ? null : typeRaw;
+    const cats = svc.categoryList(ctx.dbUser.id, s.data.type || undefined).slice(0, 20);
+    const kb = new InlineKeyboard().text('Все категории', 'an:c:all').row();
+    cats.forEach((c, i) => {
+      kb.text(c.name, `an:c:${c.id}`);
+      if (i % 2 === 1) kb.row();
+    });
+    await ctx.reply('Категория:', { reply_markup: kb });
+  });
+
+  bot.callbackQuery(/^an:c:(.+)$/, async (ctx) => {
+    const catRaw = ctx.match[1];
+    const s = getSession(ctx.from.id);
+    await ctx.answerCallbackQuery();
+    if (s.step !== 'analysis') return ctx.reply('Нажмите «📈 Анализ» снова');
+    let from;
+    let to;
+    let label;
+    if (s.data.period === 'custom' && s.data.from && s.data.to) {
+      from = s.data.from;
+      to = s.data.to;
+      label = `${from} — ${to}`;
+    } else {
+      const bounds = periodBounds(ctx.dbUser, s.data.period || 'month');
+      from = bounds.from;
+      to = bounds.to;
+      label = bounds.label;
+    }
+    const categoryId = catRaw === 'all' ? null : Number(catRaw);
+    const result = svc.analyzePeriod(ctx.dbUser, {
+      from,
+      to,
+      type: s.data.type,
+      categoryId,
+    });
+    clearSession(ctx.from.id);
+    await ctx.reply(formatAnalysis(result, label), {
+      parse_mode: 'HTML',
+      reply_markup: mainKeyboard(),
+    });
   });
 
   bot.catch((err) => console.error('bot error', err.error || err));
