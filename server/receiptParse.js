@@ -58,7 +58,11 @@ export function parseReceiptHeuristics(text, categoryNames = []) {
   if (dm) {
     let y = dm[3];
     if (y.length === 2) y = '20' + y;
-    date = `${y}-${dm[2]}-${dm[1]}`;
+    const yi = Number(y);
+    const nowY = new Date().getFullYear();
+    if (yi >= nowY - 1 && yi <= nowY) {
+      date = `${y}-${dm[2]}-${dm[1]}`;
+    }
   }
 
   // Категория

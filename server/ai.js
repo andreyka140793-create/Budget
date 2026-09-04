@@ -87,6 +87,12 @@ function normalizeDraft(parsed, today = null) {
   if (parsed.date && /^\d{4}-\d{2}-\d{2}/.test(String(parsed.date))) {
     date = String(parsed.date).slice(0, 10);
     if (today && date > today) date = today;
+    // OCR часто врёт год (2019) — не старше 400 дней
+    if (today) {
+      const t = Date.parse(today + 'T12:00:00Z');
+      const d = Date.parse(date + 'T12:00:00Z');
+      if (Number.isFinite(t) && Number.isFinite(d) && t - d > 400 * 86400000) date = today;
+    }
   }
   return {
     amount: Math.round(amount * 100) / 100,
