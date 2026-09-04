@@ -144,9 +144,52 @@ export function withTransaction(fn) {
   return db.transaction(fn)();
 }
 
-export function toCents(value) {
+/**
+ * Разбор суммы в рублях: 9999.00, 9999,00, 9 999.00, 9.999,00 → 9999
+ * Не склеивает копейки в «999900».
+ */
+export function parseMoneyRubles(value) {
   if (value === null || value === undefined || value === '') return NaN;
-  const n = typeof value === 'number' ? value : Number(String(value).replace(',', '.').replace(/\s/g, ''));
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.round(value * 100) / 100;
+  }
+  let s = String(value).trim().replace(/\u00a0/g, ' ').replace(/\s/g, '');
+  s = s.replace(/[₽рР]|руб\.?|RUB|rur/gi, '');
+  s = s.replace(/[^\d.,]/g, '');
+  if (!s) return NaN;
+
+  const lastComma = s.lastIndexOf(',');
+  const lastDot = s.lastIndexOf('.');
+
+  if (lastComma >= 0 && lastDot >= 0) {
+    // десятичный — тот разделитель, что правее
+    if (lastComma > lastDot) {
+      s = s.replace(/\./g, '').replace(',', '.');
+    } else {
+      s = s.replace(/,/g, '');
+    }
+  } else if (lastComma >= 0) {
+    if (/,\d{1,2}$/.test(s)) s = s.replace(',', '.');
+    else s = s.replace(/,/g, '');
+  } else if (lastDot >= 0) {
+    if (/\.\d{1,2}$/.test(s)) {
+      const parts = s.split('.');
+      if (parts.length > 2) {
+        const dec = parts.pop();
+        s = parts.join('') + '.' + dec;
+      }
+    } else {
+      s = s.replace(/\./g, '');
+    }
+  }
+
+  const n = Number.parseFloat(s);
+  if (!Number.isFinite(n) || n <= 0 || n >= 1e9) return NaN;
+  return Math.round(n * 100) / 100;
+}
+
+export function toCents(value) {
+  const n = parseMoneyRubles(value);
   if (!Number.isFinite(n)) return NaN;
   return Math.round(n * 100);
 }

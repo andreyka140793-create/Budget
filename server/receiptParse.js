@@ -1,3 +1,4 @@
+import { parseMoneyRubles } from './db.js';
 /**
  * Локальный разбор текста чека (без облака) + опциональный Tesseract OCR.
  */
@@ -23,7 +24,7 @@ export function parseReceiptHeuristics(text, categoryNames = []) {
   for (const re of sumPatterns) {
     const m = raw.match(re);
     if (m) {
-      const n = parseFloat(m[1].replace(/\s/g, '').replace(',', '.'));
+      const n = parseMoneyRubles(m[1]);
       if (n > 0 && n < 5_000_000) {
         amount = n;
         break;
@@ -34,8 +35,8 @@ export function parseReceiptHeuristics(text, categoryNames = []) {
   // Если не нашли — самое большое число вида 1234.56 в нижней половине чека
   if (amount == null) {
     const money = [...raw.matchAll(/(\d{1,7}[\s.,]\d{2})/g)].map((m) =>
-      parseFloat(m[1].replace(/\s/g, '').replace(',', '.'))
-    ).filter((n) => n >= 10 && n < 5_000_000);
+      parseMoneyRubles(m[1])
+    ).filter((n) => Number.isFinite(n) && n >= 10 && n < 5_000_000);
     if (money.length) amount = Math.max(...money);
   }
 

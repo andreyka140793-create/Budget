@@ -1,3 +1,4 @@
+import { parseMoneyRubles } from './db.js';
 /**
  * AI-провайдеры для чеков и текста:
  * - yandex  (Vision OCR + YandexGPT) — лучше с Amvera/РФ
@@ -81,7 +82,7 @@ function catsList(categoryNames) {
 
 function normalizeDraft(parsed, today = null) {
   if (!parsed || parsed.error || !parsed.amount) return null;
-  const amount = Number(parsed.amount);
+  const amount = parseMoneyRubles(parsed.amount);
   if (!Number.isFinite(amount) || amount <= 0) return null;
   let date = null;
   if (parsed.date && /^\d{4}-\d{2}-\d{2}/.test(String(parsed.date))) {

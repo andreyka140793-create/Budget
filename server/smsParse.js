@@ -1,3 +1,4 @@
+import { parseMoneyRubles } from './db.js';
 /**
  * Парсер SMS российских банков.
  * @returns {{amount:number, type:'expense'|'income', merchant:string, balance:number|null, raw:string}|null}
@@ -8,13 +9,8 @@ const FAILED_RE = /не прошел|не прошёл|отклонен|откл
 
 function normalizeAmount(str) {
   if (!str) return null;
-  let s = String(str).replace(/\s|\u00a0/g, '');
-  // 1.234,56 → 1234.56 ; 1,234.56 → 1234.56
-  if (/,\d{2}$/.test(s)) s = s.replace(/\./g, '').replace(',', '.');
-  else s = s.replace(/,/g, '');
-  s = s.replace(/[^\d.]/g, '');
-  const n = Number.parseFloat(s);
-  return Number.isFinite(n) && n > 0 && n < 1e9 ? Math.round(n * 100) / 100 : null;
+  const n = parseMoneyRubles(str);
+  return Number.isFinite(n) ? n : null;
 }
 
 export function parseBankSms(text) {
