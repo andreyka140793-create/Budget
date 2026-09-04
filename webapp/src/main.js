@@ -14,6 +14,18 @@ const color = (v, fallback = '#5b8def') => (/^#[0-9a-f]{6}$/i.test(String(v)) ? 
 const fmt = (n) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(n || 0) + ' ₽';
 const $ = (id) => document.getElementById(id);
 const todayLocal = () => new Date().toLocaleDateString('sv-SE');
+/** Дата с чека: не из будущего и не старше 1 года — иначе сегодня */
+function clampReceiptDate(dateStr) {
+  const today = todayLocal();
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return today;
+  if (dateStr > today) return today;
+  const d = new Date(dateStr + 'T12:00:00');
+  const yearAgo = new Date();
+  yearAgo.setFullYear(yearAgo.getFullYear() - 1);
+  if (d < yearAgo) return today;
+  return dateStr;
+}
+
 const uuid = () =>
   (crypto.randomUUID?.() || `k${Date.now()}${Math.random().toString(36).slice(2)}`).replace(/[^A-Za-z0-9_-]/g, '');
 
@@ -370,15 +382,21 @@ async function loadSettings() {
     sel.innerHTML = Array.from({ length: 24 }, (_, h) => `<option value="${h}">${String(h).padStart(2, '0')}:00</option>`).join('');
   }
   sel.value = String(s.remind_hour ?? 21);
-  $('tz-hint').textContent = `Бот пришлёт сводку за день по вашему времени (${s.timezone}). Также работает /remind on в чате.`;
-  $('admin-block').classList.toggle('hidden', !s.is_admin);
 
-  const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  if (browserTz && browserTz !== s.timezone) {
-    try {
-      await api('/settings', { method: 'POST', body: JSON.stringify({ timezone: browserTz }) });
-    } catch {}
+  const tzSel = $('tz-select');
+  if (tzSel) {
+    const tz = s.timezone || 'Europe/Moscow';
+    // если пояса нет в списке — добавим
+    if (![...tzSel.options].some((o) => o.value === tz)) {
+      const opt = document.createElement('option');
+      opt.value = tz;
+      opt.textContent = tz;
+      tzSel.appendChild(opt);
+    }
+    tzSel.value = tz;
   }
+  $('tz-hint').textContent = `Сейчас: ${s.timezone || 'Europe/Moscow'}. Напоминания и «сегодня» считаются по этому поясу.`;
+  $('admin-block').classList.toggle('hidden', !s.is_admin);
 }
 
 /* ---------- формы ---------- */
@@ -505,30 +523,152 @@ $('modal-ok').addEventListener('click', async () => {
 /* ---------- распознавание ---------- */
 const setStatus = (msg) => { $('sms-status').textContent = msg || ''; };
 
-async function confirmAndSave(draft) {
-  const sign = draft.type === 'income' ? '+' : '−';
-  const ok = await confirmAsk(
-    `Записать?\n${sign}${fmt(draft.amount)} · ${draft.type === 'income' ? 'доход' : 'расход'}\n` +
-      `${draft.category_name || '—'}\n${draft.note || ''}`
-  );
-  if (!ok) return setStatus('Отменено');
 
+/* ---------- проверка чека с правкой категории ---------- */
+const reviewQueue = [];
+let reviewIndex = 0;
+
+function fillReviewCategoryOptions(selectedName, selectedId) {
+  const sel = $('review-category');
+  const cats = (state.categories || []).filter((c) => c.type === 'expense' || !c.type);
+  sel.innerHTML = cats.map((c) => {
+    const selAttr = (selectedId && Number(c.id) === Number(selectedId))
+      || (selectedName && c.name === selectedName) ? ' selected' : '';
+    return `<option value="${c.id}"${selAttr}>${esc(c.name)}</option>`;
+  }).join('');
+  if (!sel.options.length) {
+    sel.innerHTML = '<option value="">Прочее</option>';
+  }
+}
+
+function showReviewItem() {
+  if (reviewIndex >= reviewQueue.length) {
+    $('review-modal').classList.add('hidden');
+    notify(`Сохранено чеков: обработано ${reviewQueue.length}`);
+    Promise.all([loadDashboard(), loadAllTx()]).catch(() => {});
+    return;
+  }
+  const d = reviewQueue[reviewIndex];
+  $('review-title').textContent = `Чек ${reviewIndex + 1} из ${reviewQueue.length}`;
+  $('review-hint').textContent = d._label ? `Файл: ${d._label}` : (d.source || '');
+  $('review-amount').value = d.amount ?? '';
+  $('review-note').value = d.note || '';
+  $('review-date').value = clampReceiptDate(d.date);
+  fillReviewCategoryOptions(d.category_name, d.category_id);
+  $('review-modal').classList.remove('hidden');
+}
+
+async function saveReviewCurrent() {
+  const d = reviewQueue[reviewIndex];
+  const amount = $('review-amount').value;
+  const category_id = $('review-category').value || null;
+  const note = $('review-note').value;
+  const date = clampReceiptDate($('review-date').value);
   await api('/transactions', {
     method: 'POST',
     body: JSON.stringify({
-      amount: draft.amount,
-      type: draft.type,
-      category_id: draft.category_id,
-      account_id: state.accounts[0]?.id ?? null,
-      note: draft.note || '',
-      date: draft.date || todayLocal(),
+      amount,
+      type: 'expense',
+      category_id: category_id || null,
+      account_id: $('tx-account')?.value || null,
+      date,
+      note,
       idempotency_key: uuid(),
     }),
   });
-  setStatus('Записано ✓');
   haptic('success');
-  await loadDashboard();
+  reviewIndex += 1;
+  showReviewItem();
 }
+
+function skipReviewCurrent() {
+  reviewIndex += 1;
+  showReviewItem();
+}
+
+async function saveAllReviewRemaining() {
+  const btn = $('review-save-all');
+  busy(btn, true, 'Сохраняю…');
+  try {
+    while (reviewIndex < reviewQueue.length) {
+      // подставляем текущие поля только для первого, остальные — как распознаны
+      if (reviewIndex === reviewQueue.findIndex((_, i) => i >= reviewIndex)) {
+        // always use form for current, defaults for rest after first save uses form once
+      }
+      const d = reviewQueue[reviewIndex];
+      const isCurrent = true;
+      const amount = isCurrent ? $('review-amount').value : d.amount;
+      const category_id = isCurrent ? ($('review-category').value || d.category_id) : (d.category_id || null);
+      const note = isCurrent ? $('review-note').value : (d.note || '');
+      const date = isCurrent ? ($('review-date').value || todayLocal()) : (d.date || todayLocal());
+      await api('/transactions', {
+        method: 'POST',
+        body: JSON.stringify({
+          amount: amount || d.amount,
+          type: 'expense',
+          category_id,
+          account_id: $('tx-account')?.value || null,
+          date,
+          note,
+          idempotency_key: uuid(),
+        }),
+      });
+      reviewIndex += 1;
+      if (reviewIndex < reviewQueue.length) {
+        // обновить форму для следующего перед сохранением «как есть»
+        const n = reviewQueue[reviewIndex];
+        $('review-amount').value = n.amount ?? '';
+        $('review-note').value = n.note || '';
+        $('review-date').value = n.date || todayLocal();
+        fillReviewCategoryOptions(n.category_name, n.category_id);
+      }
+    }
+    haptic('success');
+    $('review-modal').classList.add('hidden');
+    await Promise.all([loadDashboard(), loadAllTx()]);
+    notify('Все чеки сохранены отдельными операциями');
+  } catch (e) {
+    notify(e.message);
+  } finally {
+    busy(btn, false);
+  }
+}
+
+async function confirmAndSave(draft) {
+  return openReviewQueue([draft]);
+}
+
+async function openReviewQueue(drafts) {
+  try {
+    if (!state.categories?.length) await loadCategories();
+  } catch {}
+  reviewQueue.length = 0;
+  for (const d of drafts) {
+    if (d && d.amount) {
+      reviewQueue.push({
+        ...d,
+        date: clampReceiptDate(d.date),
+        type: d.type || 'expense',
+      });
+    }
+  }
+  if (!reviewQueue.length) {
+    notify('Нечего сохранять');
+    return;
+  }
+  reviewIndex = 0;
+  showReviewItem();
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(new Error('Не удалось прочитать файл'));
+    r.readAsDataURL(file);
+  });
+}
+
 
 $('btn-parse-sms').addEventListener('click', async (e) => {
   const text = $('sms-text').value.trim();
@@ -553,23 +693,65 @@ const readAsDataUrl = (file) =>
     reader.readAsDataURL(file);
   });
 
+
 $('receipt-file').addEventListener('change', async (e) => {
-  const file = e.target.files?.[0];
+  const files = [...(e.target.files || [])];
   e.target.value = '';
-  if (!file) return;
-  setStatus(`Читаю ${file.name}…`);
+  if (!files.length) return;
+
+  const status = $('sms-status');
+  const drafts = [];
+  status.textContent = `Распознаю 0/${files.length}…`;
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    status.textContent = `Распознаю ${i + 1}/${files.length}: ${file.name}…`;
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+      const isImage = String(file.type).startsWith('image/') || dataUrl.startsWith('data:image');
+      const body = isPdf ? { pdfBase64: dataUrl, multi: true } : { image: dataUrl };
+      const res = await api('/parse-receipt', { method: 'POST', body: JSON.stringify(body) });
+      // backend may return {items:[...]} or single draft
+      const items = Array.isArray(res.items) ? res.items : [res];
+      for (const it of items) {
+        if (it && it.amount) drafts.push({ ...it, _label: file.name });
+      }
+    } catch (err) {
+      console.warn(file.name, err);
+      status.textContent = `${file.name}: ${err.message}`;
+    }
+  }
+
+  if (!drafts.length) {
+    status.textContent = 'Не удалось распознать файлы';
+    notify('Не удалось распознать чеки');
+    return;
+  }
+  status.textContent = `Распознано чеков: ${drafts.length}. Проверьте и сохраните.`;
+  await openReviewQueue(drafts);
+});
+
+$('review-save')?.addEventListener('click', async () => {
   try {
-    if (file.size > 5 * 1024 * 1024) throw new Error('Файл больше 5 МБ — сожмите или сделайте фото');
-    const dataUrl = await readAsDataUrl(file);
-    const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
-    const isImage = file.type.startsWith('image/') || String(dataUrl).startsWith('data:image');
-    if (!isPdf && !isImage) throw new Error('Нужны JPG, PNG или PDF');
-    const body = isImage ? { image: dataUrl } : { pdfBase64: dataUrl };
-    await confirmAndSave(await api('/parse-receipt', { method: 'POST', body: JSON.stringify(body) }));
-  } catch (err) {
-    setStatus(err.message);
+    await saveReviewCurrent();
+  } catch (e) {
+    notify(e.message);
   }
 });
+$('review-skip')?.addEventListener('click', () => skipReviewCurrent());
+$('review-save-all')?.addEventListener('click', () => saveAllReviewRemaining());
+
+$('tz-select')?.addEventListener('change', async (e) => {
+  try {
+    await api('/settings', { method: 'POST', body: JSON.stringify({ timezone: e.target.value }) });
+    $('tz-hint').textContent = `Сейчас: ${e.target.value}. Напоминания и «сегодня» по этому поясу.`;
+    haptic('success');
+  } catch (err) {
+    notify(err.message);
+  }
+});
+
 
 /* ---------- настройки и бэкап ---------- */
 $('remind-enabled').addEventListener('change', async (e) => {
