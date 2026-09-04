@@ -87,12 +87,11 @@ if (distReady) {
       },
     })
   );
-} else if (config.isProd) {
-  console.error('webapp/dist не собран. Запустите: npm run build:web');
 } else {
   const webSrc = path.join(__dirname, '..', 'webapp');
-  console.warn('dist не найден — раздаю исходники (только для разработки)');
+  console.warn('webapp/dist нет — раздаю исходники webapp/');
   app.use(express.static(webSrc, { index: false }));
+  app.use('/src', express.static(path.join(webSrc, 'src')));
 }
 
 app.get('*', (req, res, next) => {

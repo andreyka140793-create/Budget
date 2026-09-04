@@ -57,12 +57,19 @@ export function assertConfig() {
   const problems = [];
   if (config.isProd && !config.botToken) problems.push('BOT_TOKEN обязателен в production');
   if (config.isProd && config.botMode === 'webhook') {
-    if (!config.webappUrl.startsWith('https://')) problems.push('WEBAPP_URL должен быть https://...');
-    if (config.webhookSecret.length < 16) problems.push('TELEGRAM_WEBHOOK_SECRET: минимум 16 символов');
+    if (config.webappUrl && !config.webappUrl.startsWith('https://')) {
+      problems.push('WEBAPP_URL должен быть https://...');
+    }
+    if (config.webhookSecret && config.webhookSecret.length > 0 && config.webhookSecret.length < 16) {
+      problems.push('TELEGRAM_WEBHOOK_SECRET: минимум 16 символов (или оставьте пустым)');
+    }
   }
   if (config.isProd && config.allowDevAuth) problems.push('ALLOW_DEV_AUTH запрещён в production');
   if (problems.length) {
     console.error('Ошибки конфигурации:\n - ' + problems.join('\n - '));
-    process.exit(1);
+    // Не валим процесс из‑за необязательного webhook secret
+    const fatal = problems.some((p) => p.includes('BOT_TOKEN') || p.includes('WEBAPP_URL') || p.includes('ALLOW_DEV'));
+    if (fatal) process.exit(1);
+    else console.warn('Продолжаем с предупреждениями');
   }
 }
