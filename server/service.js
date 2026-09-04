@@ -495,7 +495,11 @@ export function takeDraft(key, telegramId) {
 }
 
 export function cleanupDrafts() {
-  db.prepare('DELETE FROM bot_drafts WHERE created_at < ?').run(Date.now() - 6 * 3600 * 1000);
+  try {
+    db.prepare('DELETE FROM bot_drafts WHERE created_at < ?').run(Date.now() - 6 * 3600 * 1000);
+  } catch (e) {
+    console.warn('cleanupDrafts', e.message);
+  }
 }
 
 /* ---------- напоминания ---------- */

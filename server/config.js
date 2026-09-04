@@ -27,7 +27,7 @@ export const config = Object.freeze({
   backupDir: path.resolve(str('BACKUP_DIR') || path.join(dataDir, 'backups')),
   backupKeep: intEnv('BACKUP_KEEP', 14, 1, 100),
 
-  botToken: str('BOT_TOKEN').trim(),
+  botToken: str('BOT_TOKEN').trim().replace(/^['\"]|['\"]$/g, '').replace(/\r|\n/g, ''),
   botMode: str('BOT_MODE', 'webhook') === 'polling' ? 'polling' : 'webhook',
   runBot: str('RUN_BOT', '1') !== '0',
   webhookSecret: str('TELEGRAM_WEBHOOK_SECRET'),

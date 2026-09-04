@@ -232,6 +232,13 @@ function createSchema() {
       created_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS bot_drafts (
+      key TEXT PRIMARY KEY,
+      telegram_id TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_tx_user_date ON transactions(user_id, date);
     CREATE INDEX IF NOT EXISTS idx_tx_user_kind_type ON transactions(user_id, kind, type, date);
     CREATE INDEX IF NOT EXISTS idx_tx_user_cat ON transactions(user_id, category_id, date);
