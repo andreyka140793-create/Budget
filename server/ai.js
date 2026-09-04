@@ -140,7 +140,9 @@ async function yandexOcrImage(base64, mimeType = 'image/jpeg') {
   if (!res.ok) {
     const t = await res.text().catch(() => '');
     console.error('Yandex OCR', res.status, t.slice(0, 400));
-    throw new Error(`Yandex OCR: ошибка ${res.status}`);
+    throw new Error(res.status === 403
+      ? 'Yandex OCR 403: включите биллинг и роль ai.vision.user у сервисного аккаунта'
+      : `Yandex OCR: ошибка ${res.status}`);
   }
 
   const data = await res.json();
@@ -428,9 +430,25 @@ export async function parseReceiptImage(dataUrl, categoryNames = [], today = nul
     `Категории: ${catsList(categoryNames)}\n` +
     (today ? `Сегодня: ${today}\n` : '') +
     'Не читается — {"error":"unreadable"}.';
-  const draft = normalizeDraft(parseJsonContent(await generateVision(prompt, dataUrl)), today);
-  if (draft && !draft.note) draft.note = 'Чек';
-  return draft;
+
+  // 1) облачные провайдеры
+  if (isAiEnabled()) {
+    try {
+      const draft = normalizeDraft(parseJsonContent(await generateVision(prompt, dataUrl)), today);
+      if (draft) {
+        if (!draft.note) draft.note = 'Чек';
+        return draft;
+      }
+    } catch (e) {
+      console.warn('cloud vision failed, try local OCR:', e.message);
+    }
+  }
+
+  // 2) локальный Tesseract + эвристики (работает без ключей)
+  const { parseImageLocal } = await import('./receiptParse.js');
+  const local = await parseImageLocal(dataUrl, categoryNames);
+  if (today && local.date && local.date > today) local.date = today;
+  return local;
 }
 
 export function parseReceiptText(text, categoryNames = [], today = null) {

@@ -42,7 +42,7 @@ export const config = Object.freeze({
   aiTimeoutMs: intEnv('AI_TIMEOUT_MS', 25000, 3000, 120000),
 
   timezoneDefault: str('DEFAULT_TIMEZONE', 'Europe/Moscow'),
-  maxBodyMb: intEnv('MAX_BODY_MB', 6, 1, 20),
+  maxBodyMb: intEnv('MAX_BODY_MB', 10, 1, 25),
   maxAiPerMinute: intEnv('MAX_AI_PER_MINUTE', 10, 1, 100),
   maxRequestsPerMinute: intEnv('MAX_REQUESTS_PER_MINUTE', 180, 10, 2000),
   maxTransactionsPerDay: intEnv('MAX_TRANSACTIONS_PER_DAY', 1000, 10, 10000),

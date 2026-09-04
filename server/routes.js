@@ -120,32 +120,71 @@ router.post('/parse-sms', aiLimit, wrap(async (req, res) => {
 }));
 
 router.post('/parse-receipt', aiLimit, wrap(async (req, res) => {
-  if (!ai.isAiEnabled()) throw badRequest('Распознавание чеков не настроено на сервере');
+  /* локальный OCR работает и без облачных ключей */
   const names = svc.categoryList(req.user.id).map((c) => c.name);
   const today = svc.todayIn(svc.tzOf(req.user));
   const { image, text, pdfBase64 } = req.body || {};
 
   let draft = null;
-  if (typeof image === 'string' && image.startsWith('data:image')) {
-    draft = await ai.parseReceiptImage(image, names, today);
-  } else if (typeof text === 'string' && text.trim().length > 10) {
-    draft = await ai.parseReceiptText(text, names, today);
-  } else if (typeof pdfBase64 === 'string' && pdfBase64.length > 100) {
-    const { pdfToImageDataUrls, extractPdfText } = await import('./pdfImages.js');
-    const buf = Buffer.from(pdfBase64.replace(/^data:[^;]+;base64,/, ''), 'base64');
-    for (const img of pdfToImageDataUrls(buf)) {
+  try {
+    if (typeof image === 'string' && image.startsWith('data:image')) {
+      draft = await ai.parseReceiptImage(image, names, today);
+    } else if (typeof text === 'string' && text.trim().length > 10) {
+      draft = await ai.parseReceiptText(text, names, today);
+    } else if (typeof pdfBase64 === 'string' && pdfBase64.length > 100) {
+      if (pdfBase64.length > 12_000_000) {
+        throw badRequest('PDF слишком большой (макс ~8 МБ). Пришлите фото или сожмите файл.');
+      }
+      const { pdfToImageDataUrls, extractPdfText } = await import('./pdfImages.js');
+      let buf;
       try {
-        draft = await ai.parseReceiptImage(img, names, today);
-        if (draft) break;
-      } catch (e) { console.warn('pdf image', e.message); }
+        buf = Buffer.from(String(pdfBase64).replace(/^data:[^;]+;base64,/, ''), 'base64');
+      } catch {
+        throw badRequest('Некорректный PDF (base64)');
+      }
+      if (!buf.length) throw badRequest('Пустой PDF');
+
+      const images = pdfToImageDataUrls(buf);
+      console.log('PDF: images=', images.length, 'bytes=', buf.length);
+      for (const img of images) {
+        try {
+          draft = await ai.parseReceiptImage(img, names, today);
+          if (draft) break;
+        } catch (e) {
+          console.warn('pdf image vision:', e.message);
+        }
+      }
+      if (!draft) {
+        let extracted = '';
+        try {
+          extracted = extractPdfText(buf);
+        } catch (e) {
+          console.warn('pdf text extract:', e.message);
+        }
+        console.log('PDF: textLen=', extracted.length);
+        if (extracted.length > 10) {
+          try {
+            draft = await ai.parseReceiptText(extracted, names, today);
+          } catch (e) {
+            console.warn('pdf text ai:', e.message);
+            throw badRequest(e.message || 'Ошибка распознавания текста PDF');
+          }
+        }
+      }
+      if (!draft) {
+        throw badRequest(
+          images.length
+            ? 'Чек на PDF не разобрался. Попробуйте более чёткое фото страницы.'
+            : 'В PDF нет картинок/текста чека. Сделайте фото чека (JPG/PNG).'
+        );
+      }
+    } else {
+      throw badRequest('Нужно изображение, текст или PDF');
     }
-    if (!draft) {
-      const extracted = extractPdfText(buf);
-      if (extracted.length > 10) draft = await ai.parseReceiptText(extracted, names, today);
-    }
-    if (!draft) throw badRequest('Не удалось распознать PDF. Попробуйте фото страницы чека.');
-  } else {
-    throw badRequest('Нужно изображение, текст или PDF');
+  } catch (e) {
+    if (e instanceof ApiError) throw e;
+    console.error('parse-receipt', e);
+    throw badRequest(e.message || 'Не удалось распознать чек');
   }
 
   if (!draft) throw badRequest('Не удалось распознать чек');
@@ -172,6 +211,11 @@ router.use((err, req, res, _next) => {
     return res.status(409).json({ error: 'Такая запись уже существует' });
   }
   console.error('API error', req.method, req.path, err);
+  const msg = String(err?.message || '');
+  if (msg && msg !== 'Internal Server Error') {
+    // Пользователю полезнее видеть реальную причину (OCR/ключи/лимиты)
+    return res.status(400).json({ error: msg.slice(0, 400) });
+  }
   res.status(500).json({ error: 'Внутренняя ошибка сервера' });
 });
 
