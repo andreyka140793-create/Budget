@@ -114,9 +114,26 @@
         <textarea id="sms-text" rows="3" placeholder="Текст SMS банка..."></textarea>
         <button class="btn secondary" id="btn-parse-sms">📱 Распознать SMS</button>
 
-        <label for="receipt-file" class="btn secondary file-btn">🧾 Фото или PDF чека</label>
-        <input type="file" id="receipt-file" accept="image/*,application/pdf,.pdf" class="visually-hidden" />
+        <label for="receipt-file" class="btn secondary file-btn">🧾 Фото или PDF чеков</label>
+        <input type="file" id="receipt-file" accept="image/*,application/pdf,.pdf" class="visually-hidden" multiple />
+        <p class="hint">Можно выбрать несколько фото сразу. PDF: берём картинки из файла.</p>
         <p class="hint" id="sms-status"></p>
+
+        <h2 class="section-title">Часовой пояс</h2>
+        <label>Часовой пояс
+          <select id="tz-select">
+            <option value="Europe/Moscow">Москва (Europe/Moscow)</option>
+            <option value="Europe/Samara">Самара</option>
+            <option value="Asia/Yekaterinburg">Екатеринбург</option>
+            <option value="Asia/Novosibirsk">Новосибирск</option>
+            <option value="Asia/Krasnoyarsk">Красноярск</option>
+            <option value="Asia/Irkutsk">Иркутск</option>
+            <option value="Asia/Vladivostok">Владивосток</option>
+            <option value="Europe/Kaliningrad">Калининград</option>
+            <option value="Europe/Kiev">Киев (если нужен)</option>
+          </select>
+        </label>
+        <p class="hint" id="tz-hint"></p>
 
         <h2 class="section-title">Напоминания в Telegram</h2>
         <div class="settings-row">
@@ -126,7 +143,6 @@
           </label>
           <label>Час <select id="remind-hour"></select></label>
         </div>
-        <p class="hint" id="tz-hint"></p>
 
         <div id="admin-block" class="hidden">
           <h2 class="section-title">Бэкап (админ)</h2>
@@ -135,6 +151,30 @@
         </div>
       </section>
     </main>
+
+    <div id="review-modal" class="modal hidden">
+      <div class="modal-card review-card">
+        <h3 id="review-title">Чек 1 из 1</h3>
+        <p class="hint" id="review-hint"></p>
+        <label>Сумма
+          <input type="number" id="review-amount" inputmode="decimal" step="0.01" min="0.01" />
+        </label>
+        <label>Категория
+          <select id="review-category"></select>
+        </label>
+        <label>Комментарий
+          <input type="text" id="review-note" maxlength="120" />
+        </label>
+        <label>Дата
+          <input type="date" id="review-date" />
+        </label>
+        <div class="modal-actions review-actions">
+          <button class="btn secondary" id="review-skip">Пропустить</button>
+          <button class="btn primary" id="review-save">Сохранить</button>
+        </div>
+        <button class="btn secondary" id="review-save-all" style="width:100%;margin-top:8px">Сохранить все оставшиеся</button>
+      </div>
+    </div>
 
     <div id="modal" class="modal hidden">
       <div class="modal-card">
