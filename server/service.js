@@ -411,6 +411,51 @@ export function statsMonths(user, months = 6) {
   return out;
 }
 
+
+
+/**
+ * Анализ за период.
+ * @param {{from:string,to:string,type?:'expense'|'income'|null,categoryId?:number|null}} opts
+ */
+export function analyzePeriod(user, opts = {}) {
+  const today = todayIn(tzOf(user));
+  const from = opts.from || monthBounds(today).from;
+  const to = opts.to || today;
+  const type = opts.type === 'income' || opts.type === 'expense' ? opts.type : null;
+  const categoryId = opts.categoryId ? Number(opts.categoryId) : null;
+
+  let sql = `SELECT c.id AS category_id, c.name, c.icon, t.type,
+                    COALESCE(SUM(t.amount),0) AS total, COUNT(*) AS cnt
+             FROM transactions t
+             LEFT JOIN categories c ON c.id = t.category_id AND c.user_id = t.user_id
+             WHERE t.user_id = ? AND t.kind = 'normal' AND t.date BETWEEN ? AND ?`;
+  const params = [user.id, from, to];
+  if (type) {
+    sql += ' AND t.type = ?';
+    params.push(type);
+  }
+  if (categoryId) {
+    sql += ' AND t.category_id = ?';
+    params.push(categoryId);
+  }
+  sql += ' GROUP BY t.category_id, t.type ORDER BY total DESC';
+
+  const rows = db.prepare(sql).all(...params).map((r) => ({
+    category_id: r.category_id,
+    name: r.name || 'Без категории',
+    icon: r.icon || '📦',
+    type: r.type,
+    total: fromCents(r.total),
+    count: Number(r.cnt) || 0,
+  }));
+
+  const income = rows.filter((r) => r.type === 'income').reduce((s, r) => s + r.total, 0);
+  const expense = rows.filter((r) => r.type === 'expense').reduce((s, r) => s + r.total, 0);
+  const ops = rows.reduce((s, r) => s + r.count, 0);
+
+  return { from, to, type, categoryId, rows, income, expense, ops };
+}
+
 export function daySummary(user, date = null) {
   const day = date || todayIn(tzOf(user));
   const rows = db
