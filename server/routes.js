@@ -119,63 +119,83 @@ router.post('/parse-sms', aiLimit, wrap(async (req, res) => {
   res.json({ ...g, ...cat, date: g.date || today, source: 'ai' });
 }));
 
+
 router.post('/parse-receipt', aiLimit, wrap(async (req, res) => {
-  /* локальный OCR работает и без облачных ключей */
   const names = svc.categoryList(req.user.id).map((c) => c.name);
   const today = svc.todayIn(svc.tzOf(req.user));
-  const { image, text, pdfBase64 } = req.body || {};
+  const { image, text, pdfBase64, multi } = req.body || {};
 
-  let draft = null;
+  const items = [];
+
+  async function recognizeOneImage(dataUrl, label = '') {
+    const draft = await ai.parseReceiptImage(dataUrl, names, today);
+    if (!draft) return null;
+    const cat = svc.resolveCategoryByName(req.user.id, draft.type || 'expense', draft.category_name);
+    return {
+      ...draft,
+      ...cat,
+      date: draft.date || today,
+      source: draft.source || 'receipt',
+      label,
+    };
+  }
+
   try {
     if (typeof image === 'string' && image.startsWith('data:image')) {
-      draft = await ai.parseReceiptImage(image, names, today);
+      const one = await recognizeOneImage(image);
+      if (!one) throw badRequest('Не удалось распознать фото чека');
+      items.push(one);
     } else if (typeof text === 'string' && text.trim().length > 10) {
-      draft = await ai.parseReceiptText(text, names, today);
+      const draft = await ai.parseReceiptText(text, names, today);
+      if (!draft) throw badRequest('Не удалось распознать текст');
+      const cat = svc.resolveCategoryByName(req.user.id, draft.type || 'expense', draft.category_name);
+      items.push({ ...draft, ...cat, date: draft.date || today, source: 'text' });
     } else if (typeof pdfBase64 === 'string' && pdfBase64.length > 100) {
       if (pdfBase64.length > 12_000_000) {
-        throw badRequest('PDF слишком большой (макс ~8 МБ). Пришлите фото или сожмите файл.');
+        throw badRequest('PDF слишком большой. Сожмите файл или пришлите фото.');
       }
       const { pdfToImageDataUrls, extractPdfText } = await import('./pdfImages.js');
       let buf;
       try {
         buf = Buffer.from(String(pdfBase64).replace(/^data:[^;]+;base64,/, ''), 'base64');
       } catch {
-        throw badRequest('Некорректный PDF (base64)');
+        throw badRequest('Некорректный PDF');
       }
-      if (!buf.length) throw badRequest('Пустой PDF');
-
       const images = pdfToImageDataUrls(buf);
-      console.log('PDF: images=', images.length, 'bytes=', buf.length);
-      for (const img of images) {
+      console.log('PDF images extracted:', images.length, 'bytes', buf.length);
+
+      // Каждая картинка из PDF — отдельный чек
+      for (let i = 0; i < images.length; i++) {
         try {
-          draft = await ai.parseReceiptImage(img, names, today);
-          if (draft) break;
+          const one = await recognizeOneImage(images[i], `pdf-page-${i + 1}`);
+          if (one) items.push(one);
         } catch (e) {
-          console.warn('pdf image vision:', e.message);
+          console.warn('pdf page', i, e.message);
         }
       }
-      if (!draft) {
+
+      // Если картинок нет или ничего не распознали — текст PDF
+      if (!items.length) {
         let extracted = '';
         try {
           extracted = extractPdfText(buf);
         } catch (e) {
-          console.warn('pdf text extract:', e.message);
+          console.warn('pdf text', e.message);
         }
-        console.log('PDF: textLen=', extracted.length);
         if (extracted.length > 10) {
-          try {
-            draft = await ai.parseReceiptText(extracted, names, today);
-          } catch (e) {
-            console.warn('pdf text ai:', e.message);
-            throw badRequest(e.message || 'Ошибка распознавания текста PDF');
+          const draft = await ai.parseReceiptText(extracted, names, today);
+          if (draft) {
+            const cat = svc.resolveCategoryByName(req.user.id, draft.type || 'expense', draft.category_name);
+            items.push({ ...draft, ...cat, date: draft.date || today, source: 'pdf-text' });
           }
         }
       }
-      if (!draft) {
+
+      if (!items.length) {
         throw badRequest(
           images.length
-            ? 'Чек на PDF не разобрался. Попробуйте более чёткое фото страницы.'
-            : 'В PDF нет картинок/текста чека. Сделайте фото чека (JPG/PNG).'
+            ? 'Картинки из PDF есть, но чек не распознан. Попробуйте фото.'
+            : 'В PDF не найдены картинки чека. Загрузите фото (JPG/PNG).'
         );
       }
     } else {
@@ -187,10 +207,13 @@ router.post('/parse-receipt', aiLimit, wrap(async (req, res) => {
     throw badRequest(e.message || 'Не удалось распознать чек');
   }
 
-  if (!draft) throw badRequest('Не удалось распознать чек');
-  const cat = svc.resolveCategoryByName(req.user.id, draft.type, draft.category_name);
-  res.json({ ...draft, ...cat, date: draft.date || today, source: 'receipt' });
+  // multi / несколько элементов — items[]; один — для совместимости плоский объект + items
+  if (items.length > 1 || multi) {
+    return res.json({ items, count: items.length });
+  }
+  res.json({ ...items[0], items, count: items.length });
 }));
+
 
 router.post('/ask', aiLimit, wrap(async (req, res) => {
   if (!ai.isAiEnabled()) throw badRequest('AI-помощник не настроен на сервере');
