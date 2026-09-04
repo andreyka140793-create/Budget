@@ -37,9 +37,15 @@ function applyTheme() {
 applyTheme();
 tg?.onEvent?.('themeChanged', applyTheme);
 
-const initData = tg?.initData || 'dev';
+function getInitData() {
+  // Всегда читаем актуальное значение — после ready() Telegram может заполнить initData чуть позже
+  const fromTg = window.Telegram?.WebApp?.initData;
+  if (fromTg && String(fromTg).length > 10) return String(fromTg);
+  return 'dev';
+}
 
 async function api(path, options = {}) {
+  const initData = getInitData();
   const res = await fetch('/api' + path, {
     ...options,
     headers: {
@@ -51,6 +57,16 @@ async function api(path, options = {}) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `Ошибка ${res.status}`);
   return data;
+}
+
+async function waitForInitData(maxMs = 2500) {
+  const start = Date.now();
+  while (Date.now() - start < maxMs) {
+    const d = getInitData();
+    if (d && d !== 'dev' && d.includes('hash=')) return d;
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  return getInitData();
 }
 
 function notify(message) {
@@ -588,6 +604,19 @@ $('btn-backup').addEventListener('click', async (e) => {
 /* ---------- старт ---------- */
 (async () => {
   try {
+    if (window.Telegram?.WebApp) {
+      try { window.Telegram.WebApp.ready(); } catch {}
+      try { window.Telegram.WebApp.expand(); } catch {}
+    }
+    const id = await waitForInitData(3000);
+    if (!id || id === 'dev' || !id.includes('hash=')) {
+      $('balance').textContent = '—';
+      $('recent-list').innerHTML =
+        `<div class="empty">Нет данных Telegram.<br>` +
+        `<b>Откройте приложение кнопкой в боте</b> ( /start → «Открыть бюджет» ), ` +
+        `а не по прямой ссылке в браузере.</div>`;
+      return;
+    }
     await loadCategories();
     await loadDashboard();
     await loadSettings();
