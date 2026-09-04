@@ -5,7 +5,7 @@ import 'dotenv/config';
 import { Bot, InlineKeyboard, Keyboard, webhookCallback } from 'grammy';
 import crypto from 'node:crypto';
 import { config } from '../server/config.js';
-import { getOrCreateUser } from '../server/db.js';
+import { getOrCreateUser, parseMoneyRubles } from '../server/db.js';
 import * as svc from '../server/service.js';
 import * as ai from '../server/ai.js';
 import { parseBankSms } from '../server/smsParse.js';
@@ -104,8 +104,8 @@ async function buildDraftFromText(user, text) {
 
   const m = text.match(/(\d+[.,]?\d*)/);
   if (m) {
-    const amount = parseFloat(m[1].replace(',', '.'));
-    if (amount > 0) {
+    const amount = parseMoneyRubles(m[1]);
+    if (Number.isFinite(amount) && amount > 0) {
       const note = text.replace(m[0], '').replace(/руб|₽/gi, '').trim().slice(0, 80) || 'Операция';
       const type = /зарплат|аванс|доход|перевод\s*от/i.test(text) ? 'income' : 'expense';
       const sug = suggestCategory(note, type, categories);
@@ -482,7 +482,7 @@ export function createBot() {
     const s = getSession(ctx.from.id);
 
     if (s.step === 'tx_amount') {
-      const amount = parseFloat(text.replace(',', '.').replace(/[^\d.]/g, ''));
+      const amount = parseMoneyRubles(text);
       if (!(amount > 0)) return ctx.reply('Введите число, например 350');
       s.data.amount = amount;
       s.step = 'tx_category';
@@ -516,7 +516,7 @@ export function createBot() {
     if (lim) {
       try {
         const cat = svc.resolveCategoryByName(ctx.dbUser.id, 'expense', lim[1].trim());
-        const amount = parseFloat(lim[2].replace(',', '.'));
+        const amount = parseMoneyRubles(lim[2]);
         svc.setBudget(ctx.dbUser, { category_id: cat.category_id, amount });
         await ctx.reply(`Лимит «${esc(cat.category_name)}»: ${fmt(amount)}`, { reply_markup: mainKeyboard() });
       } catch (e) {
