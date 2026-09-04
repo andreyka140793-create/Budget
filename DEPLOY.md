@@ -70,3 +70,17 @@ npm run dev
 - `WEBAPP_URL` должен совпадать с URL в BotFather
 - SQLite-файл `data/budget.db` — сделай volume/backup на проде
 - Реальные Stars/платежи не подключены (не нужны для учёта)
+
+## Локальный OCR (tesseract.js)
+
+Пакет **не лежит в git/zip как исходник** — ставится при сборке:
+
+```bash
+npm install
+```
+
+В логе Amvera должно быть что-то вроде:
+`added ... tesseract.js`
+
+Если `require/import tesseract.js` падает — смотрите лог **npm install**, не наличие файла в репозитории.
+Первый запрос OCR скачивает языковые данные (rus+eng) — нужен исходящий интернет у контейнера.
