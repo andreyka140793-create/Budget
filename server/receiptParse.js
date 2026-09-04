@@ -1,4 +1,4 @@
-import { parseMoneyRubles } from './db.js';
+import { parseMoneyRubles, coerceReceiptAmount } from './db.js';
 /**
  * Локальный разбор текста чека (без облака) + опциональный Tesseract OCR.
  */
@@ -41,6 +41,7 @@ export function parseReceiptHeuristics(text, categoryNames = []) {
   }
 
   if (amount == null || !(amount > 0)) return null;
+  amount = coerceReceiptAmount(amount, raw);
 
   // Магазин: первые осмысленные строки
   let note = 'Чек';

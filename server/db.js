@@ -148,13 +148,23 @@ export function withTransaction(fn) {
  * Разбор суммы в рублях: 9999.00, 9999,00, 9 999.00, 9.999,00 → 9999
  * Не склеивает копейки в «999900».
  */
+
+/**
+ * Разбор суммы в рублях.
+ * "9999.00" / "9999,00" / "9 999.00" → 9999
+ */
 export function parseMoneyRubles(value) {
   if (value === null || value === undefined || value === '') return NaN;
   if (typeof value === 'number' && Number.isFinite(value)) {
     return Math.round(value * 100) / 100;
   }
-  let s = String(value).trim().replace(/\u00a0/g, ' ').replace(/\s/g, '');
-  s = s.replace(/[₽рР]|руб\.?|RUB|rur/gi, '');
+  let s = String(value).trim()
+    .replace(/\u00a0/g, ' ')
+    .replace(/[\s]/g, '')
+    .replace(/[₽]/g, '')
+    .replace(/(руб\.?|RUB|rur)/gi, '');
+  // unicode dots → .
+  s = s.replace(/[·•．¸]/g, '.');
   s = s.replace(/[^\d.,]/g, '');
   if (!s) return NaN;
 
@@ -162,12 +172,8 @@ export function parseMoneyRubles(value) {
   const lastDot = s.lastIndexOf('.');
 
   if (lastComma >= 0 && lastDot >= 0) {
-    // десятичный — тот разделитель, что правее
-    if (lastComma > lastDot) {
-      s = s.replace(/\./g, '').replace(',', '.');
-    } else {
-      s = s.replace(/,/g, '');
-    }
+    if (lastComma > lastDot) s = s.replace(/\./g, '').replace(',', '.');
+    else s = s.replace(/,/g, '');
   } else if (lastComma >= 0) {
     if (/,\d{1,2}$/.test(s)) s = s.replace(',', '.');
     else s = s.replace(/,/g, '');
@@ -186,6 +192,44 @@ export function parseMoneyRubles(value) {
   const n = Number.parseFloat(s);
   if (!Number.isFinite(n) || n <= 0 || n >= 1e9) return NaN;
   return Math.round(n * 100) / 100;
+}
+
+/**
+ * Если сумма похожа на копейки (999900 вместо 9999.00) — поправить.
+ * Сверяем с числами из текста чека/SMS.
+ */
+export function coerceReceiptAmount(amount, rawText = '') {
+  let a = typeof amount === 'number' ? amount : parseMoneyRubles(amount);
+  if (!Number.isFinite(a) || a <= 0) return NaN;
+
+  const text = String(rawText || '');
+  const candidates = [];
+  const re = /\d{1,3}(?:[\s\u00a0]\d{3})+[.,]\d{2}|\d+[.,]\d{2}|\d{1,3}(?:[\s\u00a0]\d{3})+|\d{3,7}/g;
+  let m;
+  while ((m = re.exec(text)) && candidates.length < 40) {
+    const v = parseMoneyRubles(m[0]);
+    if (Number.isFinite(v) && v > 0 && v < 5_000_000) candidates.push(v);
+  }
+
+  // Если amount == candidate * 100 → модель вернула копейки
+  for (const c of candidates) {
+    if (Math.abs(a - c) < 0.001) return c;
+    if (Math.abs(a - c * 100) < 0.001 && c >= 1) return c;
+  }
+
+  // Целое «999900» без текста: делим на 100, если похоже на копейки за чек
+  if (Number.isInteger(a) && a >= 10_000 && a % 100 === 0) {
+    const div = a / 100;
+    // 999900 → 9999; не трогаем мелкие суммы вроде 1500
+    if (a >= 100_000 && div < 100_000) {
+      // если в тексте есть div с копейками — точно
+      if (candidates.some((c) => Math.abs(c - div) < 0.01)) return div;
+      // иначе для типичных чеков < 100k руб после деления
+      if (div <= 50_000) return div;
+    }
+  }
+
+  return Math.round(a * 100) / 100;
 }
 
 export function toCents(value) {

@@ -1,4 +1,4 @@
-import { parseMoneyRubles } from './db.js';
+import { parseMoneyRubles, coerceReceiptAmount } from './db.js';
 /**
  * AI-провайдеры для чеков и текста:
  * - yandex  (Vision OCR + YandexGPT) — лучше с Amvera/РФ
@@ -80,9 +80,9 @@ function catsList(categoryNames) {
     : 'Продукты, Кафе, Транспорт, Жильё, Связь, Здоровье, Одежда, Развлечения, Прочее, Зарплата, Подработка, Подарок';
 }
 
-function normalizeDraft(parsed, today = null) {
+function normalizeDraft(parsed, today = null, rawText = '') {
   if (!parsed || parsed.error || !parsed.amount) return null;
-  const amount = parseMoneyRubles(parsed.amount);
+  const amount = coerceReceiptAmount(parsed.amount, rawText || parsed.note || '');
   if (!Number.isFinite(amount) || amount <= 0) return null;
   let date = null;
   if (parsed.date && /^\d{4}-\d{2}-\d{2}/.test(String(parsed.date))) {
@@ -427,7 +427,8 @@ export async function parseTransactionText(text, categoryNames = [], today = nul
     (today ? `Сегодня: ${today}\n` : '') +
     'Не операция — {"error":"not_transaction"}.\n\n' +
     String(text).slice(0, 2000);
-  return normalizeDraft(parseJsonContent(await generateText(prompt)), today);
+  const out = await generateText(prompt);
+  return normalizeDraft(parseJsonContent(out), today, String(text));
 }
 
 export async function parseReceiptImage(dataUrl, categoryNames = [], today = null) {
@@ -441,7 +442,8 @@ export async function parseReceiptImage(dataUrl, categoryNames = [], today = nul
   // 1) облачные провайдеры
   if (isAiEnabled()) {
     try {
-      const draft = normalizeDraft(parseJsonContent(await generateVision(prompt, dataUrl)), today);
+      const visionOut = await generateVision(prompt, dataUrl);
+      const draft = normalizeDraft(parseJsonContent(visionOut), today, visionOut);
       if (draft) {
         if (!draft.note) draft.note = 'Чек';
         return draft;
