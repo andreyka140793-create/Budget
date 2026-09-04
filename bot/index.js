@@ -5,7 +5,7 @@ import 'dotenv/config';
 import { Bot, InlineKeyboard, Keyboard, webhookCallback } from 'grammy';
 import crypto from 'node:crypto';
 import { config } from '../server/config.js';
-import { getOrCreateUser, parseMoneyRubles } from '../server/db.js';
+import { getOrCreateUser, parseMoneyRubles, coerceReceiptAmount } from '../server/db.js';
 import * as svc from '../server/service.js';
 import * as ai from '../server/ai.js';
 import { parseBankSms } from '../server/smsParse.js';
@@ -13,7 +13,7 @@ import { suggestCategory } from '../server/categorize.js';
 import { pdfToImageDataUrls, extractPdfText } from '../server/pdfImages.js';
 
 const fmt = (n) =>
-  `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(Number(n) || 0)} ₽`;
+  `${new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(Number(n) || 0)} ₽`;
 const esc = (s) =>
   String(s ?? '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
 
@@ -173,6 +173,9 @@ async function readDraftAsync(key, telegramId) {
 }
 
 async function offerDraft(ctx, user, draft) {
+  if (draft && draft.amount != null) {
+    draft.amount = coerceReceiptAmount(draft.amount, draft.note || draft.ocrPreview || '');
+  }
   const key = crypto.randomBytes(6).toString('hex');
   saveDraftBoth(key, user.telegram_id || ctx.from.id, draft);
   await ctx.reply(formatDraft(draft), {
