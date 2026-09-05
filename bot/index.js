@@ -582,8 +582,40 @@ export function createBot() {
     const cat = svc.categoryList(ctx.dbUser).find((c) => Number(c.id) === catId);
     s.data.category_id = catId;
     s.data.category_name = cat?.name || 'Прочее';
+    s.step = 'tx_note_choice';
+    const kb = new InlineKeyboard()
+      .text('💬 Комментарий', 'wiz:note:yes')
+      .text('Без комментария', 'wiz:note:no');
+    await ctx.reply('Добавить комментарий?', { reply_markup: kb });
+  });
+
+  bot.callbackQuery('wiz:note:yes', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const s = getSession(ctx.from.id);
+    if (s.step !== 'tx_note_choice' && s.step !== 'tx_note') {
+      return ctx.reply('Начните снова: ➖ Расход');
+    }
     s.step = 'tx_note';
-    await ctx.reply('Комментарий? Отправьте «-» чтобы пропустить', { reply_markup: cancelKeyboard() });
+    await ctx.reply('Напишите комментарий:', { reply_markup: cancelKeyboard() });
+  });
+
+  bot.callbackQuery('wiz:note:no', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const s = getSession(ctx.from.id);
+    if (s.step !== 'tx_note_choice' && s.step !== 'tx_note') {
+      return ctx.reply('Начните снова: ➖ Расход');
+    }
+    const d = {
+      amount: s.data.amount,
+      type: s.data.type,
+      category_id: s.data.category_id,
+      category_name: s.data.category_name,
+      note: '',
+      date: svc.todayIn(svc.tzOf(ctx.dbUser)),
+      source: 'wizard',
+    };
+    clearSession(ctx.from.id);
+    await offerDraft(ctx, ctx.dbUser, d);
   });
 
   bot.on('message:photo', async (ctx) => {
@@ -730,9 +762,12 @@ export function createBot() {
         const cat = svc.createCategory(ctx.dbUser, { name, type: s.data.type || 'expense' });
         s.data.category_id = cat.id;
         s.data.category_name = cat.name;
-        s.step = 'tx_note';
-        await ctx.reply('Категория «' + esc(cat.name) + '» создана. Комментарий? Или «-»', {
-          reply_markup: cancelKeyboard(),
+        s.step = 'tx_note_choice';
+        const kbNote = new InlineKeyboard()
+          .text('💬 Комментарий', 'wiz:note:yes')
+          .text('Без комментария', 'wiz:note:no');
+        await ctx.reply('Категория «' + esc(cat.name) + '» создана. Добавить комментарий?', {
+          reply_markup: kbNote,
         });
       } catch (e) {
         await ctx.reply(e.message || 'Не удалось создать категорию');
