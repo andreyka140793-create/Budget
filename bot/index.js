@@ -37,7 +37,7 @@ function mainKeyboard() {
     .text('➖ Расход').text('➕ Доход').row()
     .text('📈 Анализ').text('💳 Счета').row()
     .text('🏛 Копилки').text('🎯 Бюджет').row()
-    .text('⚙️ Ещё')
+    .text('👥 Семья').text('⚙️ Ещё')
     .resized()
     .persistent();
 }
@@ -108,6 +108,22 @@ function formatAnalysis(result, label) {
   );
 }
 
+async function notifyPartners(bot, actorUser, text) {
+  try {
+    const partners = svc.partnerUsers(actorUser);
+    for (const p of partners) {
+      if (!p.telegram_id) continue;
+      try {
+        await bot.api.sendMessage(p.telegram_id, text, { parse_mode: 'HTML' });
+      } catch (e) {
+        console.warn('notify partner', p.telegram_id, e.message);
+      }
+    }
+  } catch (e) {
+    console.warn('notifyPartners', e.message);
+  }
+}
+
 function cancelKeyboard() {
   return new Keyboard().text('❌ Отмена').resized();
 }
@@ -141,7 +157,7 @@ async function fileDataUrl(bot, fileId) {
 
 async function buildDraftFromText(user, text) {
   const today = svc.todayIn(svc.tzOf(user));
-  const categories = svc.categoryList(user.id);
+  const categories = svc.categoryList(user);
 
   const sms = parseBankSms(text);
   if (sms) {
@@ -161,7 +177,7 @@ async function buildDraftFromText(user, text) {
     try {
       const g = await ai.parseTransactionText(text, categories.map((c) => c.name), today);
       if (g) {
-        const cat = svc.resolveCategoryByName(user.id, g.type, g.category_name);
+        const cat = svc.resolveCategoryByName(user, g.type, g.category_name);
         return { ...g, ...cat, date: clampDate(g.date, today), source: 'ai' };
       }
     } catch (e) {
@@ -192,10 +208,10 @@ async function buildDraftFromText(user, text) {
 
 async function buildDraftFromImage(user, dataUrl) {
   const today = svc.todayIn(svc.tzOf(user));
-  const names = svc.categoryList(user.id).map((c) => c.name);
+  const names = svc.categoryList(user).map((c) => c.name);
   const draft = await ai.parseReceiptImage(dataUrl, names, today);
   if (!draft) return null;
-  const cat = svc.resolveCategoryByName(user.id, draft.type || 'expense', draft.category_name);
+  const cat = svc.resolveCategoryByName(user, draft.type || 'expense', draft.category_name);
   return { ...draft, ...cat, date: clampDate(draft.date, today), source: draft.source || 'receipt' };
 }
 
@@ -276,7 +292,7 @@ function monthText(user) {
 }
 
 function accountsText(user) {
-  const list = svc.accountList(user.id);
+  const list = svc.accountList(user);
   if (!list.length) return 'Счетов пока нет.';
   return `💳 <b>Счета</b>\n` + list.map((a) => `${a.icon || '💳'} <b>${esc(a.name)}</b>: ${fmt(a.balance)}`).join('\n');
 }
@@ -331,7 +347,7 @@ export function createBot() {
     await ctx.reply('Использование: /remind on или /remind off');
   });
 
-  const MENU = new Set(['📊 Сегодня', '📅 Месяц', '➖ Расход', '➕ Доход', '📈 Анализ', '💳 Счета', '🏛 Копилки', '🎯 Бюджет', '⚙️ Ещё', '❌ Отмена']);
+  const MENU = new Set(['📊 Сегодня', '📅 Месяц', '➖ Расход', '➕ Доход', '📈 Анализ', '💳 Счета', '🏛 Копилки', '🎯 Бюджет', '👥 Семья', '⚙️ Ещё', '❌ Отмена']);
 
   bot.hears('❌ Отмена', async (ctx) => {
     clearSession(ctx.from.id);
@@ -377,12 +393,34 @@ export function createBot() {
   });
 
   bot.hears('🏛 Копилки', async (ctx) => {
-    const list = svc.piggyList(ctx.dbUser.id);
+    const list = svc.piggyList(ctx.dbUser);
     if (!list.length) {
       return ctx.reply('Копилок нет. Создайте в будущем через «копилка Имя 10000» (скоро) или пока учитывайте расходы.');
     }
     const lines = list.map((p) => `${p.icon || '🏦'} <b>${esc(p.name)}</b>: ${fmt(p.balance)}${p.goal ? ` / ${fmt(p.goal)}` : ''}`);
     await ctx.reply(`🏛 <b>Копилки</b>\n${lines.join('\n')}`, { parse_mode: 'HTML' });
+  });
+
+  bot.hears('👥 Семья', async (ctx) => {
+    const members = svc.householdMembers(ctx.dbUser);
+    const code = svc.getOrCreateInviteCode(ctx.dbUser);
+    const lines = members.map((m) => {
+      const you = Number(m.id) === Number(ctx.dbUser.id) ? ' (вы)' : '';
+      return `• ${esc(m.name || m.telegram_id)}${you}`;
+    });
+    const kb = new InlineKeyboard()
+      .text('🔗 Код приглашения', 'fam:code')
+      .row()
+      .text('🚪 Выйти из общего бюджета', 'fam:leave');
+    await ctx.reply(
+      `👥 <b>Общий бюджет</b>\n` +
+        `Участники:\n${lines.join('\n')}\n\n` +
+        `Чтобы подключить партнёра:\n` +
+        `1. Отправьте ему код: <code>${code}</code>\n` +
+        `2. Партнёр пишет боту: <code>пара ${code}</code>\n\n` +
+        `После этого расходы и доходы будут общими, и каждый получит уведомление о действиях другого.`,
+      { parse_mode: 'HTML', reply_markup: kb },
+    );
   });
 
   bot.hears('🎯 Бюджет', async (ctx) => {
@@ -426,9 +464,17 @@ export function createBot() {
       try {
         await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() });
       } catch {}
+      const who = esc(ctx.dbUser.name || ctx.from.first_name || 'Партнёр');
+      const sign = draft.type === 'income' ? '+' : '−';
       await ctx.reply(
-        `✅ Сохранено: ${draft.type === 'income' ? '+' : '−'}${fmt(draft.amount)} · ${esc(draft.category_name || '')}`,
+        `✅ Сохранено: ${sign}${fmt(draft.amount)} · ${esc(draft.category_name || '')}`,
         { reply_markup: mainKeyboard() }
+      );
+      await notifyPartners(
+        bot,
+        ctx.dbUser,
+        `👥 <b>${who}</b> добавил(а): ${sign}${fmt(draft.amount)} · ${esc(draft.category_name || '')}` +
+          (draft.note ? `\n${esc(draft.note)}` : ''),
       );
     } catch (e) {
       await ctx.reply(`Ошибка: ${e.message}`);
@@ -449,7 +495,7 @@ export function createBot() {
     const draft = await readDraftAsync(key, ctx.from.id);
     await ctx.answerCallbackQuery();
     if (!draft) return ctx.reply('Черновик устарел');
-    const cats = svc.categoryList(ctx.dbUser.id, draft.type || 'expense').slice(0, 22);
+    const cats = svc.categoryList(ctx.dbUser, draft.type || 'expense').slice(0, 22);
     const kb = new InlineKeyboard();
     cats.forEach((c, i) => {
       kb.text(c.name, `d:setcat:${key}:${c.id}`);
@@ -465,7 +511,7 @@ export function createBot() {
     const draft = await readDraftAsync(key, ctx.from.id);
     await ctx.answerCallbackQuery({ text: 'Ок' });
     if (!draft) return ctx.reply('Черновик устарел');
-    const cat = svc.categoryList(ctx.dbUser.id).find((c) => Number(c.id) === catId);
+    const cat = svc.categoryList(ctx.dbUser).find((c) => Number(c.id) === catId);
     draft.category_id = catId;
     draft.category_name = cat?.name || draft.category_name;
     saveDraftBoth(key, ctx.from.id, draft);
@@ -502,7 +548,7 @@ export function createBot() {
     const s = getSession(ctx.from.id);
     await ctx.answerCallbackQuery();
     if (s.step !== 'tx_category') return ctx.reply('Начните снова: ➖ Расход');
-    const cat = svc.categoryList(ctx.dbUser.id).find((c) => Number(c.id) === catId);
+    const cat = svc.categoryList(ctx.dbUser).find((c) => Number(c.id) === catId);
     s.data.category_id = catId;
     s.data.category_name = cat?.name || 'Прочее';
     s.step = 'tx_note';
@@ -576,7 +622,7 @@ export function createBot() {
       if (!(amount > 0)) return ctx.reply('Введите число, например 350');
       s.data.amount = amount;
       s.step = 'tx_category';
-      const cats = svc.categoryList(ctx.dbUser.id, s.data.type).slice(0, 20);
+      const cats = svc.categoryList(ctx.dbUser, s.data.type).slice(0, 20);
       const kb = new InlineKeyboard();
       cats.forEach((c, i) => {
         kb.text(c.name, `wiz:cat:${c.id}`);
@@ -650,7 +696,7 @@ export function createBot() {
       const name = text.slice(0, 40).trim();
       if (name.length < 1) return ctx.reply('Введите название');
       try {
-        const cat = svc.createCategory(ctx.dbUser.id, { name, type: s.data.type || 'expense' });
+        const cat = svc.createCategory(ctx.dbUser, { name, type: s.data.type || 'expense' });
         s.data.category_id = cat.id;
         s.data.category_name = cat.name;
         s.step = 'tx_note';
@@ -676,7 +722,7 @@ export function createBot() {
         return ctx.reply('Черновик устарел');
       }
       try {
-        const cat = svc.createCategory(ctx.dbUser.id, { name, type: draft.type || 'expense' });
+        const cat = svc.createCategory(ctx.dbUser, { name, type: draft.type || 'expense' });
         draft.category_id = cat.id;
         draft.category_name = cat.name;
         saveDraftBoth(key, ctx.from.id, draft);
@@ -691,10 +737,35 @@ export function createBot() {
       return;
     }
 
+    // подключение к общему бюджету: «пара ABC123» или «семья ABC123»
+    const pair = text.match(/^(?:пара|семья|join)\s+([A-Za-z0-9]{4,12})$/i);
+    if (pair) {
+      try {
+        const res = svc.joinHouseholdByCode(ctx.dbUser, pair[1]);
+        ctx.dbUser.household_id = res.household_id;
+        const ownerName = esc(res.owner.name || 'партнёр');
+        await ctx.reply(
+          `✅ Вы в общем бюджете с <b>${ownerName}</b>.\nТеперь операции общие.`,
+          { parse_mode: 'HTML', reply_markup: mainKeyboard() },
+        );
+        // уведомить владельца
+        try {
+          await bot.api.sendMessage(
+            res.owner.telegram_id,
+            `👥 <b>${esc(ctx.dbUser.name || ctx.from.first_name || 'Партнёр')}</b> подключился(ась) к общему бюджету.`,
+            { parse_mode: 'HTML' },
+          );
+        } catch {}
+      } catch (e) {
+        await ctx.reply(e.message || 'Не удалось подключиться');
+      }
+      return;
+    }
+
     const lim = text.match(/^лимит\s+(.+?)\s+(\d+[.,]?\d*)$/i);
     if (lim) {
       try {
-        const cat = svc.resolveCategoryByName(ctx.dbUser.id, 'expense', lim[1].trim());
+        const cat = svc.resolveCategoryByName(ctx.dbUser, 'expense', lim[1].trim());
         const amount = parseMoneyRubles(lim[2]);
         svc.setBudget(ctx.dbUser, { category_id: cat.category_id, amount });
         await ctx.reply(`Лимит «${esc(cat.category_name)}»: ${fmt(amount)}`, { reply_markup: mainKeyboard() });
@@ -765,7 +836,7 @@ export function createBot() {
     await ctx.answerCallbackQuery();
     if (s.step !== 'analysis') return ctx.reply('Нажмите «📈 Анализ» снова');
     s.data.type = typeRaw === 'all' ? null : typeRaw;
-    const cats = svc.categoryList(ctx.dbUser.id, s.data.type || undefined).slice(0, 20);
+    const cats = svc.categoryList(ctx.dbUser, s.data.type || undefined).slice(0, 20);
     const kb = new InlineKeyboard().text('Все категории', 'an:c:all').row();
     cats.forEach((c, i) => {
       kb.text(c.name, `an:c:${c.id}`);
