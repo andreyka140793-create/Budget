@@ -335,7 +335,36 @@ function createSchema() {
 }
 
 createSchema();
+
+// миграция: общий бюджет (household)
+try {
+  let cols = [];
+  try {
+    cols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name || c.Name);
+  } catch {
+    const r = raw.exec('PRAGMA table_info(users)');
+    cols = (r[0]?.values || []).map((row) => row[1]);
+  }
+  if (!cols.includes('household_id')) {
+    raw.run('ALTER TABLE users ADD COLUMN household_id INTEGER');
+    raw.run('UPDATE users SET household_id = id WHERE household_id IS NULL');
+    markDirty();
+  }
+  if (!cols.includes('invite_code')) {
+    raw.run('ALTER TABLE users ADD COLUMN invite_code TEXT');
+    markDirty();
+  }
+  // добить null household
+  try {
+    raw.run('UPDATE users SET household_id = id WHERE household_id IS NULL');
+    markDirty();
+  } catch {}
+} catch (e) {
+  console.warn('household migration', e.message);
+}
+
 console.log('DB ready (sql.js):', config.dbPath);
+
 
 const DEFAULT_CATEGORIES = [
   ['Продукты', 'expense', '🛒', '#66bb6a'],
@@ -361,14 +390,19 @@ export function getOrCreateUser(telegramId, name = '') {
       db.prepare('UPDATE users SET name=? WHERE id=?').run(safeName, existing.id);
       existing.name = safeName;
     }
+    if (existing.household_id == null) {
+      db.prepare('UPDATE users SET household_id=? WHERE id=?').run(existing.id, existing.id);
+      existing.household_id = existing.id;
+    }
     return existing;
   }
 
   return withTransaction(() => {
     const info = db
-      .prepare('INSERT INTO users(telegram_id,name,timezone) VALUES(?,?,?)')
+      .prepare('INSERT INTO users(telegram_id,name,timezone,household_id) VALUES(?,?,?,NULL)')
       .run(tid, safeName, config.timezoneDefault);
     const userId = Number(info.lastInsertRowid);
+    db.prepare('UPDATE users SET household_id=? WHERE id=?').run(userId, userId);
 
     const insAcc = db.prepare(
       'INSERT INTO accounts(user_id,name,type,initial_balance,icon) VALUES(?,?,?,0,?)'

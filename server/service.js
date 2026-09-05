@@ -7,6 +7,90 @@ import {
   requireInt, requireName, requireNote, requireType, optionalInt, optionalIdempotencyKey,
 } from './validation.js';
 
+
+/* ---------- общий бюджет (семья) ---------- */
+export function ledgerUserId(user) {
+  return Number(user.household_id || user.id);
+}
+
+/** Пользователь, чьи данные читаем/пишем (владелец household) */
+export function asLedgerUser(user) {
+  const lid = ledgerUserId(user);
+  if (lid === Number(user.id)) return user;
+  const owner = db.prepare('SELECT * FROM users WHERE id=?').get(lid);
+  if (!owner) return user;
+  // часовой пояс — личный, остальное с владельца
+  return {
+    ...owner,
+    timezone: user.timezone || owner.timezone,
+    remind_enabled: user.remind_enabled,
+    remind_hour: user.remind_hour,
+    _actor_id: user.id,
+    _actor_telegram_id: user.telegram_id,
+    _actor_name: user.name,
+  };
+}
+
+export function householdMembers(user) {
+  const lid = ledgerUserId(user);
+  return db.prepare('SELECT * FROM users WHERE household_id=? OR id=?').all(lid, lid);
+}
+
+export function partnerUsers(user) {
+  const lid = ledgerUserId(user);
+  return db
+    .prepare('SELECT * FROM users WHERE (household_id=? OR id=?) AND id!=?')
+    .all(lid, lid, user.id);
+}
+
+function randomInviteCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let s = '';
+  for (let i = 0; i < 6; i++) s += alphabet[Math.floor(Math.random() * alphabet.length)];
+  return s;
+}
+
+export function getOrCreateInviteCode(user) {
+  const row = db.prepare('SELECT * FROM users WHERE id=?').get(user.id);
+  if (row.invite_code) return row.invite_code;
+  for (let i = 0; i < 8; i++) {
+    const code = randomInviteCode();
+    const taken = db.prepare('SELECT id FROM users WHERE invite_code=?').get(code);
+    if (taken) continue;
+    db.prepare('UPDATE users SET invite_code=? WHERE id=?').run(code, user.id);
+    return code;
+  }
+  throw badRequest('Не удалось создать код');
+}
+
+/**
+ * Присоединиться к бюджету по коду приглашения.
+ * Данные партнёра начинают писаться в household владельца кода.
+ */
+export function joinHouseholdByCode(user, code) {
+  const c = String(code || '').trim().toUpperCase();
+  if (c.length < 4) throw badRequest('Некорректный код');
+  const owner = db.prepare('SELECT * FROM users WHERE invite_code=?').get(c);
+  if (!owner) throw badRequest('Код не найден');
+  if (Number(owner.id) === Number(user.id)) throw badRequest('Это ваш собственный код');
+  const ownerHid = Number(owner.household_id || owner.id);
+  // владелец должен быть «корнем» семьи
+  db.prepare('UPDATE users SET household_id=? WHERE id=?').run(ownerHid, user.id);
+  // на всякий случай выровняем owner
+  db.prepare('UPDATE users SET household_id=? WHERE id=?').run(ownerHid, owner.id);
+  return {
+    owner,
+    household_id: ownerHid,
+    members: db.prepare('SELECT id,name,telegram_id FROM users WHERE household_id=?').all(ownerHid),
+  };
+}
+
+export function leaveHousehold(user) {
+  db.prepare('UPDATE users SET household_id=? WHERE id=?').run(user.id, user.id);
+  return { ok: true };
+}
+
+
 /* ---------- даты и таймзоны ---------- */
 export function tzOf(user) {
   return user?.timezone || config.timezoneDefault;
@@ -65,7 +149,8 @@ const ACCOUNT_SQL = `
   FROM accounts a
   WHERE a.user_id = ?`;
 
-export function accountList(userId, { includeArchived = false } = {}) {
+export function accountList(userIdOrUser, { includeArchived = false } = {}) {
+  const userId = typeof userIdOrUser === 'object' ? ledgerUserId(userIdOrUser) : userIdOrUser;
   const sql = ACCOUNT_SQL + (includeArchived ? '' : ' AND a.archived = 0') + ' ORDER BY a.id';
   return db.prepare(sql).all(userId).map((a) => ({
     id: a.id, name: a.name, type: a.type, icon: a.icon,
@@ -106,14 +191,16 @@ export function deleteAccount(userId, accountId) {
 }
 
 /* ---------- категории ---------- */
-export function categoryList(userId, type = null) {
+export function categoryList(userIdOrUser, type = null) {
+  const userId = typeof userIdOrUser === 'object' ? ledgerUserId(userIdOrUser) : userIdOrUser;
   if (type === 'income' || type === 'expense') {
     return db.prepare('SELECT * FROM categories WHERE user_id=? AND type=? ORDER BY name').all(userId, type);
   }
   return db.prepare('SELECT * FROM categories WHERE user_id=? ORDER BY type, name').all(userId);
 }
 
-export function createCategory(userId, input) {
+export function createCategory(userIdOrUser, input) {
+  const userId = typeof userIdOrUser === 'object' ? ledgerUserId(userIdOrUser) : userIdOrUser;
   const name = requireName(input.name, 'Название категории');
   const type = requireType(input.type);
   const icon = requireIcon(input.icon, '💰');
@@ -140,7 +227,8 @@ export function deleteCategory(userId, categoryId) {
   return { ok: true };
 }
 
-export function resolveCategoryByName(userId, type, categoryName) {
+export function resolveCategoryByName(userIdOrUser, type, categoryName) {
+  const userId = typeof userIdOrUser === 'object' ? ledgerUserId(userIdOrUser) : userIdOrUser;
   const cats = categoryList(userId, type);
   const wanted = String(categoryName || '').trim().toLowerCase();
   const found =
@@ -175,6 +263,8 @@ export function getTransaction(userId, id) {
 }
 
 export function createTransaction(user, input) {
+  const actorName = user._actor_name || user.name;
+  user = asLedgerUser(user);
   const userId = user.id;
   const type = requireType(input.type);
   const amount = requireAmountCents(input.amount);
@@ -215,7 +305,8 @@ export function createTransaction(user, input) {
   return getTransaction(userId, id);
 }
 
-export function deleteTransaction(userId, id) {
+export function deleteTransaction(userIdOrUser, id) {
+  const userId = typeof userIdOrUser === 'object' ? ledgerUserId(userIdOrUser) : userIdOrUser;
   const txId = requireInt(id, 'transaction_id');
   const row = db.prepare('SELECT * FROM transactions WHERE id=? AND user_id=?').get(txId, userId);
   if (!row) throw notFound('Операция не найдена');
@@ -277,6 +368,7 @@ export function deleteTransfer(userId, transferId) {
 
 /* ---------- лимиты ---------- */
 export function budgetList(user) {
+  user = asLedgerUser(user);
   const { from, to } = monthBounds(todayIn(tzOf(user)));
   return db
     .prepare(`SELECT b.id, b.category_id, b.amount, c.name, c.icon, c.color,
@@ -291,6 +383,7 @@ export function budgetList(user) {
 }
 
 export function setBudget(user, input) {
+  user = asLedgerUser(user);
   const categoryId = requireInt(input.category_id, 'category_id');
   getCategoryOwned(user.id, categoryId, 'expense');
   const amount = requireAmountCents(input.amount, 'Лимит');
@@ -312,7 +405,8 @@ const PIGGY_SQL = `
          COALESCE((SELECT SUM(o.amount) FROM piggy_ops o WHERE o.piggy_id=p.id),0) balance
   FROM piggy_banks p WHERE p.user_id = ?`;
 
-export function piggyList(userId) {
+export function piggyList(userIdOrUser) {
+  const userId = typeof userIdOrUser === 'object' ? ledgerUserId(userIdOrUser) : userIdOrUser;
   return db.prepare(PIGGY_SQL + ' ORDER BY p.id').all(userId)
     .map((p) => ({ ...p, goal: fromCents(p.goal), balance: fromCents(p.balance) }));
 }
@@ -352,6 +446,7 @@ export function deletePiggy(userId, id) {
 
 /* ---------- сводки ---------- */
 export function dashboard(user) {
+  user = asLedgerUser(user);
   const today = todayIn(tzOf(user));
   const { from, to } = monthBounds(today);
 
@@ -418,6 +513,7 @@ export function statsMonths(user, months = 6) {
  * @param {{from:string,to:string,type?:'expense'|'income'|null,categoryId?:number|null}} opts
  */
 export function analyzePeriod(user, opts = {}) {
+  user = asLedgerUser(user);
   const today = todayIn(tzOf(user));
   const from = opts.from || monthBounds(today).from;
   const to = opts.to || today;
@@ -457,6 +553,7 @@ export function analyzePeriod(user, opts = {}) {
 }
 
 export function daySummary(user, date = null) {
+  user = asLedgerUser(user);
   const day = date || todayIn(tzOf(user));
   const rows = db
     .prepare(`SELECT type, COALESCE(SUM(amount),0) t, COUNT(*) c FROM transactions
