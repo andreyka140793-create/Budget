@@ -446,6 +446,37 @@ export function createBot() {
     });
   });
 
+  /* семья */
+  bot.callbackQuery('fam:code', async (ctx) => {
+    try {
+      await ctx.answerCallbackQuery();
+      const code = svc.getOrCreateInviteCode(ctx.dbUser);
+      await ctx.reply(
+        `🔗 Код приглашения: <code>${code}</code>\n\n` +
+          `Отправьте партнёру. Он пишет боту:\n<code>пара ${code}</code>`,
+        { parse_mode: 'HTML' },
+      );
+    } catch (e) {
+      console.error('fam:code', e);
+      try { await ctx.answerCallbackQuery({ text: 'Ошибка' }); } catch {}
+      await ctx.reply(e.message || 'Не удалось получить код');
+    }
+  });
+
+  bot.callbackQuery('fam:leave', async (ctx) => {
+    try {
+      await ctx.answerCallbackQuery();
+      svc.leaveHousehold(ctx.dbUser);
+      ctx.dbUser.household_id = ctx.dbUser.id;
+      await ctx.reply('Вы вышли из общего бюджета. Новые операции снова только ваши.', {
+        reply_markup: mainKeyboard(),
+      });
+    } catch (e) {
+      console.error('fam:leave', e);
+      await ctx.reply(e.message || 'Ошибка');
+    }
+  });
+
   /* callbacks */
   bot.callbackQuery(/^d:ok:(.+)$/, async (ctx) => {
     const key = ctx.match[1];
