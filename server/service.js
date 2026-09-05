@@ -193,10 +193,11 @@ export function deleteAccount(userId, accountId) {
 /* ---------- категории ---------- */
 export function categoryList(userIdOrUser, type = null) {
   const userId = typeof userIdOrUser === 'object' ? ledgerUserId(userIdOrUser) : userIdOrUser;
+  // новые категории (свой id больше) — выше в списке
   if (type === 'income' || type === 'expense') {
-    return db.prepare('SELECT * FROM categories WHERE user_id=? AND type=? ORDER BY name').all(userId, type);
+    return db.prepare('SELECT * FROM categories WHERE user_id=? AND type=? ORDER BY id DESC').all(userId, type);
   }
-  return db.prepare('SELECT * FROM categories WHERE user_id=? ORDER BY type, name').all(userId);
+  return db.prepare('SELECT * FROM categories WHERE user_id=? ORDER BY id DESC').all(userId);
 }
 
 export function createCategory(userIdOrUser, input) {
@@ -205,10 +206,10 @@ export function createCategory(userIdOrUser, input) {
   const type = requireType(input.type);
   const icon = requireIcon(input.icon, '💰');
   const color = requireColor(input.color);
-  const dup = db
-    .prepare('SELECT 1 FROM categories WHERE user_id=? AND type=? AND lower(name)=lower(?)')
+  const existing = db
+    .prepare('SELECT * FROM categories WHERE user_id=? AND type=? AND lower(name)=lower(?)')
     .get(userId, type, name);
-  if (dup) throw badRequest('Такая категория уже есть');
+  if (existing) return existing; // уже в общем списке — просто вернём
   const count = db.prepare('SELECT COUNT(*) c FROM categories WHERE user_id=?').get(userId).c;
   if (count >= 100) throw badRequest('Слишком много категорий');
   const info = db
