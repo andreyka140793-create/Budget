@@ -91,7 +91,7 @@ function parseUserDate(text) {
 function formatAnalysis(result, label) {
   const typeLabel =
     result.type === 'expense' ? 'расходы' : result.type === 'income' ? 'доходы' : 'все операции';
-  const lines = (result.rows || []).slice(0, 20).map((r) => {
+  const lines = (result.rows || []).slice(0, 40).map((r) => {
     const sign = r.type === 'income' ? '+' : '−';
     return `${r.icon || '•'} <b>${esc(r.name)}</b>: ${sign}${fmt(r.total)} (${r.count})`;
   });
@@ -526,7 +526,7 @@ export function createBot() {
     const draft = await readDraftAsync(key, ctx.from.id);
     await ctx.answerCallbackQuery();
     if (!draft) return ctx.reply('Черновик устарел');
-    const cats = svc.categoryList(ctx.dbUser, draft.type || 'expense').slice(0, 22);
+    const cats = svc.categoryList(ctx.dbUser, draft.type || 'expense').slice(0, 40);
     const kb = new InlineKeyboard();
     cats.forEach((c, i) => {
       kb.text(c.name, `d:setcat:${key}:${c.id}`);
@@ -685,7 +685,7 @@ export function createBot() {
       if (!(amount > 0)) return ctx.reply('Введите число, например 350');
       s.data.amount = amount;
       s.step = 'tx_category';
-      const cats = svc.categoryList(ctx.dbUser, s.data.type).slice(0, 20);
+      const cats = svc.categoryList(ctx.dbUser, s.data.type).slice(0, 40);
       const kb = new InlineKeyboard();
       cats.forEach((c, i) => {
         kb.text(c.name, `wiz:cat:${c.id}`);
@@ -766,9 +766,10 @@ export function createBot() {
         const kbNote = new InlineKeyboard()
           .text('💬 Комментарий', 'wiz:note:yes')
           .text('Без комментария', 'wiz:note:no');
-        await ctx.reply('Категория «' + esc(cat.name) + '» создана. Добавить комментарий?', {
-          reply_markup: kbNote,
-        });
+        await ctx.reply(
+          'Категория «' + esc(cat.name) + '» сохранена в списке и будет доступна в следующий раз.\nДобавить комментарий?',
+          { reply_markup: kbNote },
+        );
       } catch (e) {
         await ctx.reply(e.message || 'Не удалось создать категорию');
       }
@@ -793,10 +794,10 @@ export function createBot() {
         draft.category_name = cat.name;
         saveDraftBoth(key, ctx.from.id, draft);
         clearSession(ctx.from.id);
-        await ctx.reply(formatDraft(draft), {
-          parse_mode: 'HTML',
-          reply_markup: draftKeyboard(key),
-        });
+        await ctx.reply(
+          'Категория «' + esc(cat.name) + '» сохранена в общем списке.\n\n' + formatDraft(draft),
+          { parse_mode: 'HTML', reply_markup: draftKeyboard(key) },
+        );
       } catch (e) {
         await ctx.reply(e.message || 'Не удалось создать категорию');
       }
@@ -902,7 +903,7 @@ export function createBot() {
     await ctx.answerCallbackQuery();
     if (s.step !== 'analysis') return ctx.reply('Нажмите «📈 Анализ» снова');
     s.data.type = typeRaw === 'all' ? null : typeRaw;
-    const cats = svc.categoryList(ctx.dbUser, s.data.type || undefined).slice(0, 20);
+    const cats = svc.categoryList(ctx.dbUser, s.data.type || undefined).slice(0, 40);
     const kb = new InlineKeyboard().text('Все категории', 'an:c:all').row();
     cats.forEach((c, i) => {
       kb.text(c.name, `an:c:${c.id}`);
